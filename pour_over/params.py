@@ -1221,7 +1221,9 @@ class V60Params(V60Constant):
         """
         sigma_ref = 0.060  # 93°C 附近表面張力量級
         slope = -1.5e-4    # dσ/dT < 0：溫度升高時表面張力下降
-        return max(1e-3, sigma_ref + slope * (T_K - self.T_ref))
+        # np.maximum（而非 max）：`h_cap_bed` 在後處理會餵整條 T_K 時序進來
+        sigma = np.maximum(1e-3, sigma_ref + slope * (np.asarray(T_K, dtype=float) - self.T_ref))
+        return float(sigma) if np.ndim(sigma) == 0 else sigma
 
     def tau_cap_T(self, T_K: float) -> float:
         """
