@@ -26,7 +26,67 @@ import matplotlib.font_manager as fm
 from dataclasses import dataclass, field
 from typing import ClassVar, List, Tuple
 
-from .constant import G, H_MIN, K_B, R_GAS, RHO, V60Constant
+from .calibration_state import CLOG_INDEX_REF, KBETA_PRIOR_REF, KBETA_PRIOR_SIGMA_DEX
+from .constant import (
+    CP_WATER, G, H_MIN, K_B, R_GAS, RHO,
+    SOLUTE_RADIUS_FAST_M, SOLUTE_RADIUS_SLOW_M,
+    V60Constant,
+)
+from .psd import shell_accessibility_fraction_mm
+
+# ── 萃取端可擬參數規格（F3 → F4 介面）────────────────────────────────────────
+# What: `(參數名, 變換, 下界, 上界, prior 中心, prior σ [dex])`。
+#       `fitting.EXTRACTION_FIT_PARAMS` 應由此推導出前四欄，
+#       prior 中心與 σ 供 χ² 的 log-space regularization 使用。
+# Why:  新萃取閉合只留一個 live closure 參數 `tau_tort`（顆粒內有效曲折度）。
+#       它有可證偽的物理區間：植物組織 / 咖啡細胞壁的文獻曲折度落在 2–10，
+#       因此 prior 中心取 5、σ = 0.35 dex（≈ ±2.2× 的 1σ 帶，涵蓋 2–11）。
+#       bounds [1, 100] 的下界 1 是硬物理上界（D_eff 不可能超過自由水 D），
+#       上界 100 刻意放寬到不合理區，讓「擬合把它推到 100」成為一個
+#       **可觀測的失敗訊號**，而不是被 bound 悄悄夾住。
+#       尺度前提（2026-09-24）：`lambda_fast_bins` 已改採內面封閉殼層約定
+#       `π²D/(2δ)²`。prior 中心 5.0 只有在這個約定下才與文獻 2–10 同尺度；
+#       若有人改回整球約定 `π²D/δ²`，此處必須同步 ×4，否則 prior 會系統性偏移。
+#       fit 起點：`6.4`（F3 在整球約定下定位的 TDS 命中點 25.5 ÷ 4）。
+EXTRACTION_FIT_SPEC: list[tuple[str, str, float, float, float, float]] = [
+    ("tau_tort", "log10", 1.0, 100.0, 5.0, 0.35),
+]
+
+# 驅動頭 softplus 的平滑寬度 [m]。
+# What: `bed_drive_components` 以 softplus 取代 max(0, ·)，eps 決定轉折的圓滑程度。
+# Why:  舊版把 eps 綁成 `h_cap * 0.25`，使「出口毛細截止高度」同時決定數值平滑尺度——
+#       調 h_cap（Class C closure）會連帶改變積分器看到的剛性，兩件事被混成一個旋鈕。
+#       改為獨立數值常數後，h_cap 只描述物理門檻，eps 只描述數值平滑。
+HEAD_SOFTPLUS_EPS_M = 5e-4
+
+# 水量分流 smooth_min 的平滑尺度 [m³/s]（= 1e-3 mL/s）
+# Why: 遠小於任何有意義的流量，只在「動力學上限」與「供給上限」交叉處磨平折角。
+RATE_SMOOTH_EPS = 1e-9
+
+# 水池之間「瞬時」轉移的連續化時間尺度 [s]
+# What: 任何一個水池的抽取率一律 ≤ 存量 / TRANSFER_TAU_S。
+# Why:  這不是可調 closure，而是質量守恆本身的連續化寫法：
+#       「水池排出速率不可能超過現有存量 / 一個瞬間」。τ → 0 是精確約束，
+#       但會讓方程剛性爆掉；取 1.0 s（≈ 2× max_step）是 RK45 能平滑解析的最小值。
+#       它同時界定兩件事：
+#         (a) 積水滲入床內 mobile 孔隙（濕床滲入是 Darcy 尺度，不是毛細 τ_cap 尺度）
+#         (b) 自由水 / mobile 水在存量見底時的出流上限
+#       因此不需要任何 clamp，出流在水耗盡時自然歸零。
+TRANSFER_TAU_S = 1.0
+
+
+def smooth_min(a, b, eps: float):
+    """
+    可微的 min(a, b)。
+
+    What: min(a,b) = 0.5*(a + b - |a - b|)，把 |·| 換成 sqrt((a-b)^2 + eps^2)。
+    Why:  水量守恆需要「動力學上限」與「供給上限」同時成立，但硬 min() 會在兩者
+          交叉處製造斜率不連續，讓 RK45 反覆縮步。eps 遠離交叉處無影響，
+          僅在交叉鄰域把折角磨圓。
+    """
+    diff = np.asarray(a, dtype=float) - np.asarray(b, dtype=float)
+    return 0.5 * (np.asarray(a, dtype=float) + np.asarray(b, dtype=float)
+                  - np.sqrt(diff * diff + eps * eps))
 
 
 def _setup_cjk_font() -> None:
@@ -54,8 +114,8 @@ class RoastProfile:
     烘焙度對應的化學與物理係數集（不可變）。
 
     What: 封裝「烘焙度」直接決定的參數差異，與研磨度 k 正交分離。
-    Why:  烘焙改變豆子的細胞結構（max_EY）、可溶物組成（fast_fraction）、
-          萃取動力學（Ea_slow、k_ext_factor）以及 CO₂ 含量（吸水率）。
+    Why:  烘焙改變豆子的細胞結構（max_EY = 可及溶質總量）、大分子溶解上限
+          （C_sat_slow）、沖煮水溫慣例以及 CO₂ 含量（吸水率）。
           這些參數不應由使用者逐一調整，而應透過語意明確的工廠 for_roast() 管理。
 
     使用方式：
@@ -72,16 +132,15 @@ class RoastProfile:
     # k-M 聯動靈敏度；淺焙硬豆磨細效益有限（0.10），深焙較高（0.20）
 
     # ── 萃取動力學 ────────────────────────────────────────────────────────
-    k_ext_factor: float
-    # k_ext_coef 相對倍率（相對於中焙基準 1.0）
-    # Why: 深焙糖類分解增加易溶物 → k_ext↑；淺焙有機酸多但細胞壁阻力大 → k_ext↓
-
-    Ea_slow: float
-    # Slow 組分活化能 [J/mol]；深焙苦味物質焦化後活化能降低（更易在高溫萃出）
-
-    # ── 組分比例 ──────────────────────────────────────────────────────────
-    fast_fraction: float
-    # Fast 組分佔比；淺焙含更多有機酸（0.45），深焙苦味物多（0.25）
+    # F3（2026-09-24）移除 `k_ext_factor` / `Ea_slow` / `fast_fraction`：
+    #   - `k_ext_factor` 是 deprecated 的 `k_ext_coef` 的倍率，該基底已不存在。
+    #   - `Ea_slow`：溫度相依現由 Stokes-Einstein `D(T) = k_B T /(6π μ(T) r)` 完整
+    #     描述，再疊 Arrhenius 等於把同一件事數兩次（AUD-3 溫度三重計數）。
+    #   - `fast_fraction`：兩池的質量分配改由 measured PSD 的殼層可及性
+    #     `shell_acc_i` 逐 bin 決定（見 `V60Params._set_extraction_bins`），
+    #     不再有一個與 PSD 無關的全域比例旋鈕。
+    #   烘焙度對萃取速率的影響改由 `max_EY`（可及溶質總量）與 `C_sat_slow`
+    #   （大分子溶解上限）兩個仍有量測根據的量承擔。
 
     C_sat_slow: float
     # Slow 組分平衡濃度 [g/L]；深焙苦味物量大（100），淺焙少（60）
@@ -112,9 +171,6 @@ RoastProfile.LIGHT = RoastProfile(
     name              = "light",
     max_EY            = 0.22,
     alpha_EY          = 0.10,
-    k_ext_factor      = 0.80,
-    Ea_slow           = 50000.0,
-    fast_fraction     = 0.45,
     C_sat_slow        = 60.0,
     brew_temp_K       = 365.15,  # 92°C：淺焙結構緻密，常用較高水溫
     absorb_dry_ratio  = 0.40,
@@ -126,9 +182,6 @@ RoastProfile.MEDIUM = RoastProfile(
     name              = "medium",
     max_EY            = 0.30,   # Gagné: 中焙手沖上限 ~30%（舊值 0.28 偏保守）
     alpha_EY          = 0.15,
-    k_ext_factor      = 1.00,
-    Ea_slow           = 45000.0,
-    fast_fraction     = 0.35,
     C_sat_slow        = 80.0,
     brew_temp_K       = 363.15,  # 90°C：中焙取淺/深焙之間的工程中值
     absorb_dry_ratio  = 0.50,
@@ -140,9 +193,6 @@ RoastProfile.DARK = RoastProfile(
     name              = "dark",
     max_EY            = 0.32,   # Gagné: 深焙細胞壁破壞嚴重，上限 30–32%；取上界 0.32
     alpha_EY          = 0.20,
-    k_ext_factor      = 1.30,
-    Ea_slow           = 38000.0,
-    fast_fraction     = 0.25,
     C_sat_slow        = 100.0,
     brew_temp_K       = 361.15,  # 88°C：深焙細胞壁破裂、苦味易出，常用較低水溫
     absorb_dry_ratio  = 0.70,
@@ -247,8 +297,12 @@ class V60Params(V60Constant):
     # bloom 結束後，流動方程使用的等效飽和度鬆弛時間 [s]
     # Why: 避免 sat_flow 在 bloom_end 發生硬切，同時保留「後段視作已成濕床」的工程近似
 
-    sat_rel_perm_residual: float = 0.18
-    # 未飽和達西的殘餘飽和度門檻；低於此值時主過床流近乎無法形成連通液相
+    sat_rel_perm_residual: float = 0.0
+    # Corey 相對滲透率的殘餘飽和度門檻，作用在 **mobile 飽和度 S_mob** 上。
+    # Why 從 0.18 改為 0：殘餘（毛細保水）水量自 F2b 起是顯式狀態 `V_imm`，
+    #      而 `S_mob = V_mob / (φ·V_bed − V_imm)` 的分母已經把 immobile 佔用的
+    #      孔隙扣掉。此時再留一個非零 s_r 等於把同一份保水水量記兩次，
+    #      會在 drawdown 段提前把 kr 壓到 0。s_r 現在是結構性的 0，不該再當 fit DOF。
 
     sat_rel_perm_exp: float = 3.0
     # Corey 型相對滲透率指數；控制 `kr(sat)` 在接近飽和前的打開速度
@@ -293,21 +347,28 @@ class V60Params(V60Constant):
     # 推算：典型 EY_max≈28%，20g粉 → 5.6g 溶質，V_liquid≈15mL → 373 g/L
     # 但實際平衡受細胞壁阻力限制，取 150 g/L 作為有效 C_sat
 
-    k_ext_coef: float = 6.0e-7
-    # DEPRECATED 2026-05-02：原為單一萃取速率係數 [m³/s]，已被 fast/slow 雙 pool 取代。
-    # 主 ODE 路徑（`core.py` rhs）只使用 `k_ext_fast_coef` / `k_ext_slow_coef`（透過
-    # `nw_eta_*` 在 __post_init__ 反推），本欄位**不再進入主萃取計算**。
-    # 仍保留欄位以維持向後相容性（`for_grind` / `for_roast` / 舊版 `fit_two_stage`
-    # / `analysis.sensitivity_analysis` tornado 仍引用），但對 EY/TDS 預測無實質作用。
-    # 改用 `k_ext_fast_coef`、`k_ext_slow_coef` 或（經 stage 7 fit 後）`max_EY` 與
-    # 對應 `nw_eta` derived 值。subagent 萃取審計 deferred 的 rename 任務會徹底移除。
-
     max_EY: float = 0.30
-    # 最大萃取率（可溶物佔粉重的比例）
-    # Why: 決定初始固相溶質量 M_sol_0 = dose_g × max_EY [g]
-    #      當 M_sol → 0 時 C_sat_eff → 0，自然終止萃取，修正 C_bed 末端暴增
-    # Gagné 實驗依據：手沖可萃取上限 30–32%；中焙取保守值 0.30
-    # 舊值 0.28 來自 SCA 測試豆校準，偏保守；修正為物理上限中位估計
+    # 可及溶質總量佔粉重的比例 [-]（Class D：凍結為 roast prior，不進 fitting）
+    # What: 決定初始固相溶質量 M_sol_0 = dose_g × max_EY [g]，並逐 bin 依
+    #       volume_fraction × shell_accessibility 分配到 fast / slow 兩池。
+    # Why:  Gagné 回報手沖可萃取上限 30–32%（中焙）、淺焙細胞壁緻密約 22%。
+    #       這是一個**有物理上限**的量：`max_EY > 1` 沒有意義，> 0.32 已超過
+    #       文獻上限。舊 stage 7 把它擬到 0.3725 並與凍結的 `fast_fraction`
+    #       完全簡併（AUD-3），等於用一個超物理的可萃取總量吸收萃取速率
+    #       closure 的結構誤差。現在它由 `RoastProfile` 給定後凍結，
+    #       唯一的 live 萃取參數是 `tau_tort`。
+
+    tau_tort: float = 5.0
+    # 咖啡顆粒內部的有效曲折度 τ_tort [-]（Class C：**本閉合唯一的 live 參數**）
+    # What: D_eff,x = D_x(T) / τ_tort，同時作用於 fast 與 slow 兩池。
+    #       它把「細胞壁 + 孔隙曲折 + 未溶解基質阻礙」一次收成一個無因次阻力，
+    #       不再有 fast / slow 各自的 mobility 與效率因子。
+    # Why:  自由水中的 Stokes-Einstein D 是擴散的物理上界；多孔生物基質的
+    #       有效擴散係數一定比它小，比值即 τ_tort（嚴格說是 τ²/ε_p，此處
+    #       以單一有效值表示）。植物組織與咖啡細胞壁的文獻曲折度落在 2–10，
+    #       因此這個參數**有可證偽的物理區間**——若擬合把它推到 100，
+    #       代表閉合結構仍有問題，而不是「再調一點就好」。
+    #       fitting 應在 log 空間搜尋（見模組常數 `EXTRACTION_FIT_SPEC`）。
 
     # ── 修正 [6] 熱力學 ────────────────────────────────────────────────────────
     lambda_cool: float = 3.7e-4
@@ -317,11 +378,22 @@ class V60Params(V60Constant):
     # 範圍 cup ΔT swing 僅 0.06 °C（純平 ridge）；保留為預設值，不進入 fitting。
 
     lambda_liquid_dripper: float = 0.0
-    # 液體與濾杯間的等效熱交換係數 [1/s]
-    # Why: 補上液體對濾杯持續放熱，而不只在終點把容器當一次性混杯熱沉
-    # FIT（2026-04-30）：thermal identifiability scan 顯示此 λ 為熱端最強自由度
-    # （cup ΔT swing 0.77 °C），由 `fit_k_kbeta_from_flow_profile` stage 6 校準；
-    # `MEASURED_LIQUID_DRIPPER_LAMBDA = 0.02` 改作 initial guess 與弱 prior reg 中心。
+    # DEPRECATED（expand 期）：液體與濾杯間的等效熱交換係數 [1/s]
+    # What: 舊式集總係數，直接寫在液體節點的 dT/dt 上，與濕潤面積、液量都無關。
+    # Why 棄用: fit 值 0.0496 /s 換算成界面熱通量後隱含 U ≈ 1044 W/m²K，
+    #      遠高於「濕濾紙 + 陶瓷」串聯的物理上界（U ∈ [120, 550]，名目 194）。
+    #      成因是係數被迫同時吸收「面積隨水位變化」與「液體熱容隨注水變化」兩件事。
+    #      改由 `U_liquid_dripper_W_m2K` × `wetted_area(h)` 表達。
+    # 相容策略（expand → migrate → contract）：`U_liquid_dripper_W_m2K` 為 None/0 時，
+    #      模型退回本欄的舊行為並發出 DeprecationWarning；待 fitting 改 fit U 後移除。
+
+    U_liquid_dripper_W_m2K: float | None = 194.0
+    # 液體 ⇄ 濾杯的界面總熱傳係數 [W/(m²·K)]
+    # What: 熱流 = U · A_wet(h) · (T_liquid − T_dripper)，A_wet 為錐面濕潤側面積。
+    # Why:  把「界面材料性質」與「幾何」分離後，係數才有可辯護的物理區間。
+    #       串聯估計：濕濾紙 (~0.2 mm, λ≈0.6 W/mK) + 陶瓷內側熱阻 + 接觸熱阻
+    #       → U ∈ [120, 550] W/m²K，名目 194。fitting 應在此區間內標定。
+    #       設為 None 或 0 → 退回 `lambda_liquid_dripper` 舊路徑（DeprecationWarning）。
 
     lambda_dripper_ambient: float = 0.0
     # 濾杯對環境自然對流冷卻係數 [1/s]
@@ -336,33 +408,21 @@ class V60Params(V60Constant):
     # 與 `lambda_liquid_dripper` 沿對角線存在 mild ridge（Δloss span ~0.16），
     # sequential fit (stage 5 → stage 6) 可同時校準兩者。
 
-    Ea_ext: float = 25000.0
-    # 萃取活化能 Ea [J/mol]（~25 kJ/mol）
-    # Why: 符合擴散控制固液萃取典型範圍（10–40 kJ/mol）
-    #      80°C vs 93°C：k_ext 降至 ~74%（定性與杯測感受一致）
-
     alpha_C_sat: float = 0.003
     # C_sat 溫度係數 [1/K]；C_sat(T) = C_sat_ref·(1+α·(T-T_ref))
     # Why: 溶解度為溫度正函數（吸熱）；0.3%/K 對應典型有機物測量值
     #      使 83°C 萃取天花板低於 99°C，復現冷萃化學差異
 
-    # ── 修正 [7] 多組分萃取 ────────────────────────────────────────────────────
-    fast_fraction: float = 0.35
-    # Fast 組分佔可溶物比例（有機酸、咖啡因、糖類）
-    # Why: Fast 在低 T 易萃，決定明亮感與酸度；Slow 需高 T，帶出苦味
-
+    # ── 兩池溶解度上限（萃取驅動力的 cutoff）───────────────────────────────
+    # F3（2026-09-24）：`fast_fraction` 與 `Ea_fast / Ea_slow` 已移除。
+    #   - 兩池的質量分配改由 measured PSD 的殼層可及性逐 bin 決定。
+    #   - 溫度相依只保留兩條：D_x(T)（Stokes-Einstein，控速率）與
+    #     C_sat,x(T)（控平衡上限）。Arrhenius 是第三條，與 D(T) 重複。
     C_sat_fast: float = 220.0
     # Fast 組分平衡濃度 [g/L]；活性物質分子量小，溶解度較高
 
     C_sat_slow: float = 80.0
     # Slow 組分平衡濃度 [g/L]；大分子苦味物質溶解度低
-
-    Ea_fast: float = 15000.0
-    # Fast 活化能 [J/mol]（~15 kJ/mol）；小分子擴散快，低 T 即可萃出
-
-    Ea_slow: float = 45000.0
-    # Slow 活化能 [J/mol]（~45 kJ/mol）；苦味物質需突破高熱障礙
-    # Why: 99°C 下 k_ext_slow 比 83°C 高 ~7×，復現「高溫焦苦感」
 
     alpha_C_fast: float = 0.0015
     # Fast C_sat 溫度係數 [1/K]；小分子，對 T 較不靈敏
@@ -374,7 +434,7 @@ class V60Params(V60Constant):
     k_ref: float = 6e-11
     # 中研磨參考滲透率 [m²]；聯動公式以此為基準
     # Why: k 是研磨度的流體力學代理變數（k ∝ d²，Kozeny-Carman）
-    #      改變 k 即代表改變粒徑 d ∝ k^(1/2)，同步牽動 max_EY 和 k_ext_coef
+    #      改變 k 即代表改變粒徑 d ∝ k^(1/2)，同步牽動 max_EY
 
     alpha_EY: float = 0.15
     # 可及溶質冪次指數：max_EY(k) = max_EY_ref × (k_ref/k)^alpha_EY
@@ -383,35 +443,15 @@ class V60Params(V60Constant):
     # 校準：粗(5e-11)→細(5e-12) EY 約 22→30%，alpha≈0.12–0.18（取 0.15）
     # 警告：超過 alpha=0.3 會使模型在細研磨端 EY > 100%（物理不合理）
 
-    alpha_ext: float = 0.30
-    # 萃取速率冪次指數：k_ext(k) = k_ext_ref × (k_ref/k)^alpha_ext
-    # Why: 磨細 → 粒徑縮短 → 擴散路徑縮短 → k_ext↑
-    #      alpha_ext > 0：k↓（研磨越細）→ k_ext↑（更快萃出）
-    # 物理估算：k_ext ∝ 1/d² ∝ 1/k（alpha≈1），但實測偏弱，取保守值 0.30
-
-    # ── 修正 [15] 流速依賴傳質係數（邊界層 Sh 效應）────────────────────────────
-    k_diff_ratio: float = 0.1
-    # 靜置/流動 k_ext 比值；Q_ext=0 時 k_ext_eff = k_diff_ratio × k_ext_T(T)
-    # Why: 無流動時邊界層加厚，Sherwood 數降低 ~3-10×；
-    #      0.1 = 物理合理估計（靜置僅靠分子擴散，效率約為對流狀態的 10%）
-    #      量化影響：60s 悶蒸 EY 貢獻從 +1.31% 降至 ~0.3-0.5%（符合 Gagné 觀測邊界）
-
-    k_ext_fast_coef: float = 6.0e-7 * 2.3
-    # Fast 組分萃取基礎速率常數（已合併原 k_ext_coef × k_ext_fast_mult = 2.3 倍）
-    # Why: 直接給定單一 base coefficient，避免「base × multiplier」雙自由度退化；
-    #      Fast（小分子、酸甜）更依賴對流更新，需要較大基礎速率以維持 SCA 目標 EY 18–22%
-
-    k_ext_slow_coef: float = 6.0e-7 * 0.525
-    # Slow 組分萃取基礎速率常數（已合併原 k_ext_coef × k_ext_slow_mult = 0.525 倍）
-    # Why: Slow（苦味大分子）在靜置時仍有緩慢累積；保守基礎速率避免長悶蒸過度萃取
-
-    Q_half: float = 3e-7
-    # Hill 方程半飽和流速 [m³/s]（= 0.3 mL/s）
-    # Why: 邊界層過渡的物理臨界點 ≈ Pe=1，即 v_crit = D/d_p ≈ 1.7e-6 m/s
-    #      對應體積流量 ~0.005 mL/s；加上注水擾動效應，工程值取 0.3 mL/s
-    #      flow_factor = k_diff_ratio + (1-k_diff_ratio) × Q_ext/(Q_ext+Q_half)
-    #      Q_ext = 0.3 mL/s 時 flow_factor = 0.55；Q_ext = 1.5 mL/s 時 = 0.85
-    #      舊設 Q_half=1 mL/s 錯誤：把正常滴濾（1-2 mL/s）誤判為半靜置狀態
+    # F3（2026-09-24）移除 `alpha_ext`（配合 `k_ext_coef` 一同消失）、
+    # `k_diff_ratio` / `Q_half`（Hill flow_factor）、`k_ext_fast_coef` /
+    # `k_ext_slow_coef`（Noyes-Whitney base rate）。
+    #   - Hill flow_factor：`k_diff_ratio = 0.1` 宣稱靜置時傳質降到 1/10，
+    #     但球體的 Sherwood 數在 Re → 0 仍有下限 Sh = 2（純傳導），
+    #     不存在 10× 的抑制。且 AUD-3 證明 (k_diff_ratio, Q_half) 在單一
+    #     TDS 觀測下完全不可辨識。
+    #   - `k_ext_*_coef` / `nw_eta_*`：速率常數現在由幾何（δ_i、R_core,i）與
+    #     D(T)/τ_tort 直接算出，沒有「效率因子」可以反推。
 
     # ── 修正 [16] Darcy 毛細驅動飽和（Capillary-driven imbibition）────────────
     tau_cap_ref: float = 10.0
@@ -423,23 +463,25 @@ class V60Params(V60Constant):
     #      高溫（93°C）比低溫（20°C）快 2.8×，復現「高溫水入粉快」的物理現象
     #      注：此項與液壓填充（Q_in/V_absorb）疊加，不是取代
 
-    # ── 修正 [11] Pool 內部驅動力衰減（constant-area Noyes-Whitney）─────────
-    beta_access: float = 1.0
-    # 單一 pool 內部的驅動力衰減冪次。
-    # Why: bin-resolved 框架已透過 fast / slow 雙 pool 結構表達「易出的先走、
-    #      難出的後走」這個 aggregate 「末期阻力」現象——
-    #      fast pool 短 L、shell-only mass、快耗盡；slow pool 長 L、core mass、慢釋出。
-    #      EY(t) 從 [60,90] 區間 ~23 m%/s 衰到 [120,150] 區間 ~1.9 m%/s 已是 12× 衰減，
-    #      由 pool 結構自然產生，無需在 pool 內部再疊一次冪次衰減。
-    #      因此 pool 內部 driving force 採 constant-area Noyes-Whitney：
-    #        C_eff = C_sat(T) × (M/M₀)^1
-    #      β > 1 的「pool 內部超線性」沒有對應的物理機制（殼層 200 μm 內無法支撐
-    #      super-linear 阻力），且實證 sweep 顯示 β=1.5 反而把 fast pool 拖到 90s 後
-    #      仍未耗盡——與杯測「fast 前段出完」的直覺相反。
-    # 候選：
-    #      β=1.0：constant-area Noyes-Whitney（預設，與 bin-resolved 自洽）
-    #      β=2/3：shrinking-core（球形粒子 A ∝ M^(2/3)），可選的更精細形式
-    #      β=1.5：歷史值，aggregate-pool 時代的補償，已不再適用
+    tau_wet_s: float = 40.0
+    # 床層潤濕狀態 w 的建立時間常數 [s]（Class C，本 slice 唯一新增的 closure 參數）
+    # What: dw/dt = (1 − w)/τ_wet，w ∈ [0,1] 表示「粉床已建立保水能力的比例」。
+    #       w 同時是 **顆粒吸水容量** `V_full·w` 與 **毛細保水容量** `φ·V_bed·f_retain·w`
+    #       的上限係數。
+    # Why:  量測（kinu29 4:11, retained_mass_g）給出兩個互斥的硬事實：
+    #         t = 30 s 總保水僅 14.6 g（< φ·V_bed = 20.8 mL，更 ≪ V_full + φV_bed = 44.8）
+    #         t = 142 s 總保水 52.1 g（> 44.8 mL）
+    #       亦即剛潤濕的乾床會被重力排乾，保水能力是「隨潤濕逐漸建立」的時序量，
+    #       不是常數 hold-up。物理來源：光焙、含 CO₂ 的乾粉初期疏水，
+    #       水要先驅出微孔 CO₂、纖維溶脹後，毛細保水與顆粒吸收才建立得起來。
+    #       τ_wet 由 retained_mass_g 的時序直接標定（見 F2b 報告 §3），
+    #       不是用來吸收 V_out(t) 誤差的自由旋鈕。
+
+    # F3（2026-09-24）移除 `beta_access`：pool 內部的驅動力衰減不再用
+    #   `C_eff = C_sat·(M/M₀)^β` 這個 constant-area Noyes-Whitney 寫法表達。
+    #   新閉合是一階釋放 `dM/dt = −λ·w·(1 − C/C_sat)·M`：驅動力的 M 相依
+    #   已經由 `·M` 本身攜帶（Crank 首項的線性衰減），再乘一次 (M/M₀)^β
+    #   等於把同一個衰減數兩次。
 
     # ── 修正 [8] 顆粒溶脹（Kozeny-Carman）──────────────────────────────────
     delta_phi: float = 0.02
@@ -456,6 +498,14 @@ class V60Params(V60Constant):
 
     fine_radius_ratio: float = 0.12
     # 細粉代表半徑相對 D10 的比例；供拖曳力診斷使用
+
+    pore_radius_ratio: float = 0.2
+    # 代表性孔喉半徑相對顆粒特徵徑（Sauter d32，退回 D10）的比例
+    # What: r_pore = pore_radius_ratio × d_char；供 Young-Laplace 保水頭 `h_cap_bed` 使用。
+    # Why:  隨機堆積球床的孔喉尺度約為顆粒徑的 0.15–0.25（Carman/Mayer-Stowe 量級），
+    #       取中值 0.2。此值決定「床層能否被重力排乾」，不是自由擬合旋鈕：
+    #       整個 [0.15, 0.25] 區間在 h_bed = 5.3 cm 下都給出 h_cap_bed > h_bed，
+    #       結論（S_r = 1，濕床不自排）對此比例不敏感。
 
     darcy_capillary_c0: float = 0.16663265
     # 已浸濕床層的 Darcy 毛細係數在 0°C 的截距
@@ -508,13 +558,20 @@ class V60Params(V60Constant):
     # 最小粒徑下限 [m]；供 measured PSD 缺值時的數值安全夾限
 
     shell_thickness: float = 200e-6
-    # 可萃取外層厚度 [m]；可及可溶物質量 ∝ 外層殼層體積
-
-    nu_p_fast: float = 1.1e11
-    # Einstein-Smoluchowski mobility：Fast 組分 D = ν_p k_B T
-
-    nu_p_slow: float = 4.5e10
-    # Slow 組分 mobility 較低，反映大分子/苦味組分擴散較慢
+    # 可萃取外層（破壁層）厚度 [m]（Class B）
+    # What: 研磨造成細胞壁破裂的深度尺度。它同時決定兩件事：
+    #       (1) fast pool 的質量分率 shell_acc_i = 1 − (1 − δ_i/R_i)³
+    #       (2) fast pool 的擴散長度 δ_i = min(shell_thickness, R_i)
+    # Why:  同一個厚度必須同時定義「有多少質量」與「要走多遠」，否則兩者
+    #       可以各自被調整去補償對方。舊實作對 L_fast 另外加了
+    #       `max(0.25·shell_thickness, ...)` 的絕對 floor，使多數 bin 的
+    #       L_fast 全等（AUD-3），等於把 bin-resolved 幾何抹平成常數。
+    #
+    # F3（2026-09-24）移除 `nu_p_fast` / `nu_p_slow`：舊式 `D = ν_p·k_B·T`
+    #   的固定 mobility 等價於「D 與黏度無關」，而水在 92 → 75 °C 之間
+    #   μ 上升 39%，真實 D 應下降約 34%——方向相反。改用 Stokes-Einstein
+    #   `D_x(T) = k_B T /(6π μ(T) r_x)`，分子尺度 r_x 由 `constant.py` 的
+    #   `SOLUTE_RADIUS_FAST_M` / `SOLUTE_RADIUS_SLOW_M` 提供（Class B）。
 
     def cone_bed_volume_m3(self, h_bed_m: float | None = None) -> float:
         """
@@ -578,63 +635,104 @@ class V60Params(V60Constant):
             cumulative = next_cumulative
         return float(rows_sorted[-1]["d_hi_mm"])
 
+    #: `_load_psd_bin_rows` 必須存在的欄位；缺欄代表 bins CSV 是舊格式。
+    REQUIRED_PSD_BIN_COLUMNS: ClassVar[tuple[str, ...]] = (
+        "d_lo_mm", "d_hi_mm", "d_mid_mm", "num_fraction", "volume_fraction",
+        "diameter_eq_mean_mm", "diameter_eq_median_mm", "aspect_ratio_mean",
+        "surface_to_volume_mm_inv_mean", "surface_to_volume_mm_inv_vol_weighted",
+    )
+
     def _load_psd_bin_rows(self, bins_csv_path: str | Path, diameter_scale: float = 1.0) -> list[dict]:
         """
-        載入並縮放 multi-bin PSD rows。
+        載入並（必要時）縮放 multi-bin PSD rows。
 
-        What: 讀入 bins CSV，並把所有長度相關欄位按 `diameter_scale` 同步縮放。
-        Why:  measured PSD 要同時服務 D10 對齊、k 反推比例調整，以及後續的 bin-resolved 萃取；
-              把縮放邏輯集中，才能保證水力與萃取共用同一組幾何假設。
+        What: 讀入 bins CSV，把所有長度相關欄位按 `diameter_scale` 同步縮放，
+              並依縮放後的直徑重算 shell accessibility 欄位。
+        Why:  PSD 的絕對尺度由 bins CSV 決定；`diameter_scale` 只在顯式做研磨度
+              sweep 時 ≠ 1。shell 欄是直徑的非線性函數，縮放直徑卻沿用 CSV 內的
+              舊 shell 值會讓幾何自相矛盾，因此改為與 `pour_over.psd` 共用同一個
+              解析函式重算。
         """
         path = Path(bins_csv_path)
         scale = max(float(diameter_scale), 1e-9)
         with path.open("r", encoding="utf-8", newline="") as f:
-            rows_raw = [{k: float(v) for k, v in row.items()} for row in csv.DictReader(f)]
+            reader = csv.DictReader(f)
+            missing = [c for c in self.REQUIRED_PSD_BIN_COLUMNS if c not in (reader.fieldnames or [])]
+            if missing:
+                raise ValueError(
+                    f"PSD bins CSV 缺少欄位 {missing}：{path}；"
+                    "請以 `uv run python -m pour_over.psd --raw ... --out-bins ...` 重新產生"
+                )
+            rows_raw = [{k: float(v) for k, v in row.items()} for row in reader]
         if not rows_raw:
             raise ValueError(f"空的 PSD bins CSV：{path}")
 
+        shell_mm = self.shell_thickness * 1e3
         rows_scaled: list[dict] = []
         for row in sorted(rows_raw, key=lambda r: r["d_lo_mm"]):
             scaled = dict(row)
             for key in ("d_lo_mm", "d_hi_mm", "d_mid_mm", "diameter_eq_mean_mm", "diameter_eq_median_mm"):
                 scaled[key] = row[key] * scale
-            scaled["surface_to_volume_mm_inv_mean"] = row["surface_to_volume_mm_inv_mean"] / scale
+            for key in ("surface_to_volume_mm_inv_mean", "surface_to_volume_mm_inv_vol_weighted"):
+                scaled[key] = row[key] / scale
+            shell_acc = shell_accessibility_fraction_mm(scaled["diameter_eq_mean_mm"], shell_mm)
+            scaled["shell_accessibility_mean"] = shell_acc
+            scaled["shell_accessibility_volume_weighted"] = shell_acc
             rows_scaled.append(scaled)
         return rows_scaled
+
+    def throat_diameter_from_d32(self, d32_mm: float) -> float:
+        """
+        由 Sauter 平均粒徑推估床層孔喉特徵直徑 [mm]。
+
+        What: `d_throat = 0.2 · d32 · sqrt(φ / (1 − φ))`。
+        Why:  Kozeny 型的水力半徑 r_h = φ/((1−φ)·a_s)，對球形床 a_s = 6/d32，
+              故 d_throat ∝ d32·φ/(1−φ)。這裡取其在常見 φ ≈ 0.4–0.5 附近的
+              sqrt 形式並配 0.2 的幾何前因子，讓孔喉尺寸隨 PSD 自身移動，
+              而不是寫死一個與粒徑無關的 0.45 mm 門檻。
+              前因子 0.2 未獨立標定，只保證 d_throat 落在 fines bin 尺度。
+        """
+        phi = float(np.clip(self.phi, 1e-6, 1.0 - 1e-6))
+        return 0.2 * max(float(d32_mm), 1e-9) * float(np.sqrt(phi / (1.0 - phi)))
 
     def _particle_stats_from_bins_csv(self, bins_csv_path: str | Path, diameter_scale: float = 1.0) -> dict:
         """
         由 multi-bin PSD CSV 計算粒子子模型統計。
 
         What:
-          1. 從 bins 直接整合 volume_fraction 與各 bin 形狀統計
-          2. 計算比表面積、200 μm 殼層可及性與有效擴散路徑
-          3. 視需要由 number fraction 直接內插 D10
+          1. 由 bins 整合 Sauter d32、比表面積、殼層可及性與有效擴散路徑
+          2. 以 d32 推得的孔喉尺度計算 throat / deposition 堵塞指數
+          3. 另附 number-based D10/D50/D90 供診斷（resolution-bounded）
 
         Why:
-          有實測 PSD 時，這些量不應再由理想碎形分佈近似；
-          直接整合 bins 能讓表面積與殼層模型真正落在量測分布上。
+          有實測 PSD 時這些量不該再由理想碎形近似。尺度錨點使用 d32 而非 D10：
+          d32 由粗端主導、對影像偵測下限不敏感，而 number-based D10 完全被
+          偵測下限鉗制（整數像素格點 artifact）。
         """
-        def shell_accessibility_fraction_mm(diameter_mm: float) -> float:
-            radius = 0.5 * max(float(diameter_mm), 1e-12)
-            shell_mm = min(self.shell_thickness * 1e3, radius)
-            core_radius = max(radius - shell_mm, 0.0)
-            return 1.0 - (core_radius / radius) ** 3
-
         rows_sorted = self._load_psd_bin_rows(bins_csv_path, diameter_scale=diameter_scale)
         vol_total = sum(max(r["volume_fraction"], 0.0) for r in rows_sorted)
         if vol_total <= 0:
             raise ValueError(f"PSD bins CSV 的 volume_fraction 總和為 0：{bins_csv_path}")
-
         num_total = sum(max(r["num_fraction"], 0.0) for r in rows_sorted)
-        aspect_mean = sum(max(r["num_fraction"], 0.0) * r["aspect_ratio_mean"] for r in rows_sorted) / max(num_total, 1e-12)
-        roundness_mean = sum(max(r["num_fraction"], 0.0) * r["roundness_mean"] for r in rows_sorted) / max(num_total, 1e-12)
+        if num_total <= 0:
+            raise ValueError(f"PSD bins CSV 的 num_fraction 總和為 0：{bins_csv_path}")
+
+        # 第一趟：比表面積 → Sauter d32 → 孔喉尺度。
+        # a_s = Σ(vol_frac · (S/V)_vol_weighted) = 6/d32，故 d32 可直接反推。
+        surface_area_mm_inv = sum(
+            (max(r["volume_fraction"], 0.0) / vol_total) * r["surface_to_volume_mm_inv_vol_weighted"]
+            for r in rows_sorted
+        )
+        d32_mm = 6.0 / max(surface_area_mm_inv, 1e-12)
+        d_throat_mm = self.throat_diameter_from_d32(d32_mm)
+
+        aspect_mean = sum(max(r["num_fraction"], 0.0) * r["aspect_ratio_mean"] for r in rows_sorted) / num_total
+        roundness_mean = sum(max(r["num_fraction"], 0.0) * r["roundness_mean"] for r in rows_sorted) / num_total
         span_num = (
             self._quantile_from_bins_csv(rows_sorted, 0.90, "num_fraction")
             - self._quantile_from_bins_csv(rows_sorted, 0.10, "num_fraction")
         ) / max(self._quantile_from_bins_csv(rows_sorted, 0.50, "num_fraction"), 1e-12)
 
-        surface_area_mm_inv = 0.0
         surface_area_fast_mm_inv = 0.0
         shell_fraction_vol = 0.0
         diffusion_path_fast_mm = 0.0
@@ -648,25 +746,29 @@ class V60Params(V60Constant):
         fine_diameter_acc_mm = 0.0
         for row in rows_sorted:
             vol_w = max(row["volume_fraction"], 0.0) / vol_total
-            num_w = max(row["num_fraction"], 0.0) / max(num_total, 1e-12)
+            num_w = max(row["num_fraction"], 0.0) / num_total
             d_mean = max(row["diameter_eq_mean_mm"], 1e-9)
-            sv_mm_inv = row["surface_to_volume_mm_inv_mean"]
-            shell_acc = shell_accessibility_fraction_mm(d_mean)
+            sv_mm_inv = row["surface_to_volume_mm_inv_vol_weighted"]
+            shell_acc = shell_accessibility_fraction_mm(d_mean, self.shell_thickness * 1e3)
             core_ratio = max(1.0 - shell_acc, 0.0) ** (1.0 / 3.0)
             core_radius_mm = 0.5 * d_mean * core_ratio
             shell_depth_mm = min(self.shell_thickness * 1e3, 0.5 * d_mean)
             shell_mid_mm = max(0.5 * shell_depth_mm, 1e-9)
-            aspect = max(row["aspect_ratio_mean"], 1.0)
-            roundness = max(row["roundness_mean"], 0.25)
-            irregularity = (aspect / roundness) ** 0.35
-            surface_area_mm_inv += vol_w * sv_mm_inv
+            # ROUNDNESS ≡ 1/aspect_ratio（raw CSV 恆等式），故舊式 (aspect/roundness)^0.35
+            # 恆等於 aspect^0.70；直接寫成 aspect^0.70，避免看起來像兩個獨立形狀輸入。
+            # 0.70 為未獨立標定的形狀指數。
+            irregularity = max(row["aspect_ratio_mean"], 1.0) ** 0.70
+            # 堵塞機率的飽和形式：顆粒遠小於孔喉時接近 1，遠大於孔喉時 ∝ d_throat/d。
+            # 取代舊的 min(0.45/d, 2.0) —— 那是與 PSD 無關的 magic number，且在
+            # 粗端沒有正確的漸近行為。
+            clog_kernel = 1.0 / (1.0 + d_mean / max(d_throat_mm, 1e-12))
             surface_area_fast_mm_inv += vol_w * sv_mm_inv * shell_acc
             shell_fraction_vol += vol_w * shell_acc
             diffusion_path_fast_mm += vol_w * shell_acc * shell_mid_mm
             diffusion_path_slow_mm += vol_w * max(1.0 - shell_acc, 0.0) * max(core_radius_mm, shell_mid_mm)
             shell_weight_total += vol_w * shell_acc
-            throat_clog_index += num_w * irregularity * min(0.45 / d_mean, 2.0)
-            deposition_clog_index += vol_w * irregularity * min(0.55 / d_mean, 1.8)
+            throat_clog_index += num_w * irregularity * clog_kernel
+            deposition_clog_index += vol_w * irregularity * clog_kernel
             fast_reactive_index += vol_w * sv_mm_inv * shell_acc
             slow_reactive_index += vol_w * sv_mm_inv * max(1.0 - shell_acc, 0.0)
             if d_mean < 0.50:
@@ -676,9 +778,10 @@ class V60Params(V60Constant):
         D10_mm = self._quantile_from_bins_csv(rows_sorted, 0.10, "num_fraction")
         D50_mm = self._quantile_from_bins_csv(rows_sorted, 0.50, "num_fraction")
         D90_mm = self._quantile_from_bins_csv(rows_sorted, 0.90, "num_fraction")
-        fines_num_lt_0p30 = sum(max(r["num_fraction"], 0.0) for r in rows_sorted if r["d_mid_mm"] < 0.30) / max(num_total, 1e-12)
-        fines_num_lt_0p40 = sum(max(r["num_fraction"], 0.0) for r in rows_sorted if r["d_mid_mm"] < 0.40) / max(num_total, 1e-12)
-        fines_num_lt_0p50 = sum(max(r["num_fraction"], 0.0) for r in rows_sorted if r["d_mid_mm"] < 0.50) / max(num_total, 1e-12)
+        Dv50_mm = self._quantile_from_bins_csv(rows_sorted, 0.50, "volume_fraction")
+        fines_num_lt_0p30 = sum(max(r["num_fraction"], 0.0) for r in rows_sorted if r["d_mid_mm"] < 0.30) / num_total
+        fines_num_lt_0p40 = sum(max(r["num_fraction"], 0.0) for r in rows_sorted if r["d_mid_mm"] < 0.40) / num_total
+        fines_num_lt_0p50 = sum(max(r["num_fraction"], 0.0) for r in rows_sorted if r["d_mid_mm"] < 0.50) / num_total
         fines_vol_lt_0p30 = sum(max(r["volume_fraction"], 0.0) for r in rows_sorted if r["d_mid_mm"] < 0.30) / vol_total
         fines_vol_lt_0p40 = sum(max(r["volume_fraction"], 0.0) for r in rows_sorted if r["d_mid_mm"] < 0.40) / vol_total
         fines_vol_lt_0p50 = sum(max(r["volume_fraction"], 0.0) for r in rows_sorted if r["d_mid_mm"] < 0.50) / vol_total
@@ -695,6 +798,9 @@ class V60Params(V60Constant):
             "diffusion_path_m": slow_path_mm * 1e-3,
             "diffusion_path_fast_m": fast_path_mm * 1e-3,
             "diffusion_path_slow_m": slow_path_mm * 1e-3,
+            "d32_m": d32_mm * 1e-3,
+            "Dv50_m": Dv50_mm * 1e-3,
+            "throat_diameter_m": d_throat_mm * 1e-3,
             "D10_m": D10_mm * 1e-3,
             "D50_m": D50_mm * 1e-3,
             "D90_m": D90_mm * 1e-3,
@@ -717,139 +823,146 @@ class V60Params(V60Constant):
 
     def _build_extraction_bins_from_rows(self, rows_sorted: list[dict]) -> dict:
         """
-        將 PSD bins 轉成 bin-resolved 萃取子模型所需的幾何量。
+        將 measured PSD bins 轉成兩池一階釋放閉合所需的**幾何**量。
 
         What:
-          對每個 bin 建立：
-          - 固體體積分率
-          - fast/slow 對應的表面積 A_i
-          - fast/slow 的擴散路徑 L_i
-          - fast/slow 的質量分配權重
+          對每個 bin 由解析後的等效球直徑 d_i 直接算出：
+            R_i        = d_i / 2                          顆粒半徑
+            δ_i        = min(shell_thickness, R_i)         破壁殼層厚度（= fast 擴散長度）
+            R_core,i   = R_i − δ_i                         未破壁核心半徑（= slow 擴散長度）
+            shell_acc_i = 1 − (R_core,i / R_i)³            fast pool 的質量分率
+          並回傳 PSD 自身的 volume / number fraction 與形狀量（供堵塞 closure 用）。
 
         Why:
-          這是把 measured PSD 從「只提供單一 D10」提升成真正可進 ODE 的關鍵；
-          之後每個 bin 都能有自己的 A_i、L_i、M_i、C_i，而不是先壓成單一平均量。
+          新閉合（Crank 球形擴散首項）只需要「多少質量」與「要走多遠」兩件事：
+          質量由 `volume_fraction × shell_acc` 決定，距離由 δ_i / R_core,i 決定。
+          舊實作另外算了 A_fast / A_slow（面積）與 path_fast / path_slow（長度），
+          再讓 `nw_eta_*` 去反推一個把 A·D/L 湊回目標速率的效率因子——
+          面積與效率因子完全簡併，而 `path_fast` 的絕對 floor
+          `max(0.25·shell_thickness, ·)` 讓多數 bin 的長度全等（AUD-3）。
+          現在 λ_i 只由 δ_i、R_core,i 與 D(T)/τ_tort 決定，沒有可反推的自由度。
+
+          **一致性保證**：δ_i 與 shell_acc_i 出自同一條幾何，因此
+          「fast pool 有多少質量」與「fast pool 的擴散長度」不能各自被調整。
         """
         vol_total = sum(max(r["volume_fraction"], 0.0) for r in rows_sorted)
         if vol_total <= 0:
             raise ValueError("PSD bins 的 volume_fraction 總和必須為正")
 
-        V_solid_total = (1.0 - self.phi) * self.V_bed
-        area_fast_list: list[float] = []
-        area_slow_list: list[float] = []
-        path_fast_list: list[float] = []
-        path_slow_list: list[float] = []
-        fast_reactive: list[float] = []
-        slow_reactive: list[float] = []
         num_fraction: list[float] = []
         vol_fraction: list[float] = []
         d_mid_m: list[float] = []
         aspect: list[float] = []
         roundness: list[float] = []
         shell_fraction: list[float] = []
+        radius_list: list[float] = []
+        delta_list: list[float] = []
+        core_radius_list: list[float] = []
 
         for row in rows_sorted:
             num_w = max(row["num_fraction"], 0.0)
             vol_w = max(row["volume_fraction"], 0.0) / vol_total
             d_mean_m = max(row["diameter_eq_mean_mm"] * 1e-3, 1e-12)
-            shell_acc = float(np.clip(row["shell_accessibility_volume_weighted"], 0.0, 1.0))
-            core_ratio = max(1.0 - shell_acc, 0.0) ** (1.0 / 3.0)
-            core_radius_m = 0.5 * d_mean_m * core_ratio
-            shell_depth_m = min(self.shell_thickness, 0.5 * d_mean_m)
-            shell_mid_m = max(0.5 * shell_depth_m, 1e-12)
-            sv_m_inv = row["surface_to_volume_mm_inv_mean"] * 1e3
-            V_solid_i = V_solid_total * vol_w
+            # shell accessibility 與殼層厚度由**同一個**縮放後直徑解析算出，
+            # 與 `pour_over.psd.shell_accessibility_fraction_mm` 共用定義。
+            shell_acc = float(np.clip(
+                shell_accessibility_fraction_mm(row["diameter_eq_mean_mm"], self.shell_thickness * 1e3),
+                0.0, 1.0,
+            ))
+            radius_m = 0.5 * d_mean_m
+            delta_m = min(self.shell_thickness, radius_m)
+            core_radius_m = max(radius_m - delta_m, 0.0)
 
-            A_total_i = sv_m_inv * V_solid_i
-            A_fast_i = A_total_i * shell_acc
-            # A_slow_i = core-surface area
-            # Why: slow pool 由 core 表面釋出溶質到 bulk，瓶頸在 core surface 而非
-            #      整個 particle outer surface。`(1 - shell_acc)^(2/3)` 對應球形
-            #      殘存核心的相對 surface area（核心半徑 ∝ (1-shell)^(1/3)，面積 ∝ 半徑²）。
-            # 2026-05-01 P0 修正：原 `A_slow_i = A_total_i` 不真實放大 slow 介面，
-            #      讓 slow A 比 fast A 還大，與物理直覺相反。subagent 萃取審計指出此問題。
-            core_surface_factor = max(1.0 - shell_acc, 0.0) ** (2.0 / 3.0)
-            A_slow_i = A_total_i * max(core_surface_factor, 0.05)
-
-            area_fast_list.append(A_fast_i)
-            area_slow_list.append(A_slow_i)
-            path_fast_list.append(max(0.25 * self.shell_thickness, shell_mid_m))
-            path_slow_list.append(max(self.shell_thickness, max(core_radius_m, shell_mid_m)))
-            fast_reactive.append(max(A_fast_i, 0.0))
-            slow_reactive.append(max(A_total_i * max(1.0 - shell_acc, 0.05), 0.0))
             num_fraction.append(num_w)
             vol_fraction.append(vol_w)
             d_mid_m.append(max(row["d_mid_mm"] * 1e-3, 1e-12))
             aspect.append(max(row["aspect_ratio_mean"], 1.0))
             roundness.append(max(row["roundness_mean"], 0.25))
             shell_fraction.append(shell_acc)
-
-        fast_reactive_arr = np.asarray(fast_reactive, dtype=float)
-        slow_reactive_arr = np.asarray(slow_reactive, dtype=float)
-        vol_arr = np.asarray(vol_fraction, dtype=float)
-        fast_mass_frac = fast_reactive_arr / max(float(np.sum(fast_reactive_arr)), 1e-18)
-        slow_mass_frac = slow_reactive_arr / max(float(np.sum(slow_reactive_arr)), 1e-18)
+            radius_list.append(radius_m)
+            delta_list.append(delta_m)
+            core_radius_list.append(core_radius_m)
 
         return {
             "count": len(rows_sorted),
             "num_fraction": np.asarray(num_fraction, dtype=float),
-            "volume_fraction": vol_arr,
+            "volume_fraction": np.asarray(vol_fraction, dtype=float),
             "diameter_mid_m": np.asarray(d_mid_m, dtype=float),
             "aspect_ratio_mean": np.asarray(aspect, dtype=float),
             "roundness_mean": np.asarray(roundness, dtype=float),
             "shell_fraction": np.asarray(shell_fraction, dtype=float),
-            "area_fast_m2": np.asarray(area_fast_list, dtype=float),
-            "area_slow_m2": np.asarray(area_slow_list, dtype=float),
-            "path_fast_m": np.asarray(path_fast_list, dtype=float),
-            "path_slow_m": np.asarray(path_slow_list, dtype=float),
-            "fast_mass_fraction": fast_mass_frac,
-            "slow_mass_fraction": slow_mass_frac,
+            "radius_m": np.asarray(radius_list, dtype=float),
+            "shell_depth_m": np.asarray(delta_list, dtype=float),
+            "core_radius_m": np.asarray(core_radius_list, dtype=float),
         }
 
     def _set_extraction_bins(self, bins: dict | None = None) -> None:
         """
-        設定萃取 bins 供 ODE 直接使用。
+        設定萃取 bins 與兩池初始質量，供 ODE 直接使用。
 
         What:
-          - 有 measured PSD bins 時，建立多 bin 幾何與質量權重
-          - 否則退化成單一 aggregate bin，維持舊 fast/slow 模型行為
+          逐 bin 寫入幾何（δ_i、R_core,i、shell_acc_i）與初始質量：
+              M_fast_0,i = dose · max_EY · vol_frac_i ·  shell_acc_i
+              M_slow_0,i = dose · max_EY · vol_frac_i · (1 − shell_acc_i)
+          並由其總和回填 `M_fast_0` / `M_slow_0` / `M_sol_0`。
 
         Why:
-          這讓 `core.py` 可以統一用 bin-resolved 狀態更新，而不用分兩套邏輯。
+          `Σ_i vol_frac_i = 1` ⇒ `M_sol_0 ≡ dose · max_EY`，**恆等**。
+          舊實作是 `dose·max_EY·fast_fraction_effective·shell_accessibility_ratio`
+          與 `dose·max_EY·(1−f)·shell_ratio^0.7`：三個與 PSD 幾乎無關的縮放因子
+          串在一起，其中 `fast_fraction` 已凍結、`shell_accessibility_ratio`
+          在 F1 之後恆為 1，於是整條退化成一個與 `max_EY` 完全簡併的常數
+          （AUD-3：`max_EY_fit = 0.3725` 超物理上限就是這個簡併的產物）。
+          現在兩池的分配**只**由 measured PSD 的殼層可及性決定，
+          沒有任何可調的分配旋鈕。
         """
         if bins is None:
+            # fallback：沒有 measured PSD 時退化成單一代表性 bin（同一套幾何語言）。
+            radius = 0.5 * max(float(self.d32), self.particle_d_min)
+            delta = min(self.shell_thickness, radius)
+            core_radius = max(radius - delta, 0.0)
+            shell_acc = float(np.clip(1.0 - (core_radius / max(radius, 1e-18)) ** 3, 0.0, 1.0))
             self.extraction_bin_count = 1
-            self.ext_bin_area_fast_m2 = np.array([self.noyes_whitney_area(slow=False)], dtype=float)
-            self.ext_bin_area_slow_m2 = np.array([self.noyes_whitney_area(slow=True)], dtype=float)
-            self.ext_bin_path_fast_m = np.array([self.diffusion_path_fast_m], dtype=float)
-            self.ext_bin_path_slow_m = np.array([self.diffusion_path_slow_m], dtype=float)
-            self.ext_bin_fast_mass_fraction = np.array([1.0], dtype=float)
-            self.ext_bin_slow_mass_fraction = np.array([1.0], dtype=float)
             self.ext_bin_num_fraction = np.array([1.0], dtype=float)
             self.ext_bin_volume_fraction = np.array([1.0], dtype=float)
-            self.ext_bin_diameter_mid_m = np.array([self.D10], dtype=float)
+            self.ext_bin_diameter_mid_m = np.array([self.d32], dtype=float)
             self.ext_bin_aspect_ratio_mean = np.array([getattr(self, "psd_aspect_ratio_mean", 1.0)], dtype=float)
             self.ext_bin_roundness_mean = np.array([getattr(self, "psd_roundness_mean", 1.0)], dtype=float)
-            self.ext_bin_shell_fraction = np.array([self.shell_fraction_abs], dtype=float)
-            self.M_fast_0_bins = np.array([self.M_fast_0], dtype=float)
-            self.M_slow_0_bins = np.array([self.M_slow_0], dtype=float)
-            return
+            self.ext_bin_shell_fraction = np.array([shell_acc], dtype=float)
+            self.ext_bin_radius_m = np.array([radius], dtype=float)
+            self.ext_bin_shell_depth_m = np.array([delta], dtype=float)
+            self.ext_bin_core_radius_m = np.array([core_radius], dtype=float)
+        else:
+            self.extraction_bin_count = int(bins["count"])
+            self.ext_bin_num_fraction = np.asarray(bins["num_fraction"], dtype=float)
+            self.ext_bin_volume_fraction = np.asarray(bins["volume_fraction"], dtype=float)
+            self.ext_bin_diameter_mid_m = np.asarray(bins["diameter_mid_m"], dtype=float)
+            self.ext_bin_aspect_ratio_mean = np.asarray(bins["aspect_ratio_mean"], dtype=float)
+            self.ext_bin_roundness_mean = np.asarray(bins["roundness_mean"], dtype=float)
+            self.ext_bin_shell_fraction = np.asarray(bins["shell_fraction"], dtype=float)
+            self.ext_bin_radius_m = np.asarray(bins["radius_m"], dtype=float)
+            self.ext_bin_shell_depth_m = np.asarray(bins["shell_depth_m"], dtype=float)
+            self.ext_bin_core_radius_m = np.asarray(bins["core_radius_m"], dtype=float)
 
-        self.extraction_bin_count = int(bins["count"])
-        self.ext_bin_area_fast_m2 = np.asarray(bins["area_fast_m2"], dtype=float)
-        self.ext_bin_area_slow_m2 = np.asarray(bins["area_slow_m2"], dtype=float)
-        self.ext_bin_path_fast_m = np.asarray(bins["path_fast_m"], dtype=float)
-        self.ext_bin_path_slow_m = np.asarray(bins["path_slow_m"], dtype=float)
-        self.ext_bin_fast_mass_fraction = np.asarray(bins["fast_mass_fraction"], dtype=float)
-        self.ext_bin_slow_mass_fraction = np.asarray(bins["slow_mass_fraction"], dtype=float)
-        self.ext_bin_num_fraction = np.asarray(bins["num_fraction"], dtype=float)
-        self.ext_bin_volume_fraction = np.asarray(bins["volume_fraction"], dtype=float)
-        self.ext_bin_diameter_mid_m = np.asarray(bins["diameter_mid_m"], dtype=float)
-        self.ext_bin_aspect_ratio_mean = np.asarray(bins["aspect_ratio_mean"], dtype=float)
-        self.ext_bin_roundness_mean = np.asarray(bins["roundness_mean"], dtype=float)
-        self.ext_bin_shell_fraction = np.asarray(bins["shell_fraction"], dtype=float)
-        self.M_fast_0_bins = self.M_fast_0 * self.ext_bin_fast_mass_fraction
-        self.M_slow_0_bins = self.M_slow_0 * self.ext_bin_slow_mass_fraction
+        # slow pool 的有效核心半徑：R_core → 0 時該 bin 的 M_slow_0 也 → 0
+        # （shell_acc → 1），因此 floor 只影響一個質量為零的池的 λ 報表值，
+        # 不改變任何質量流。設 floor 的唯一理由是避免 λ_slow = ∞ 進 ODE。
+        self.ext_bin_core_radius_eff_m = np.maximum(
+            self.ext_bin_core_radius_m, 0.25 * np.maximum(self.ext_bin_shell_depth_m, 1e-12)
+        )
+
+        shell_acc_arr = np.clip(self.ext_bin_shell_fraction, 0.0, 1.0)
+        vol_arr = np.maximum(self.ext_bin_volume_fraction, 0.0)
+        M_total = float(self.dose_g) * float(self.max_EY)
+        self.M_fast_0_bins = M_total * vol_arr * shell_acc_arr
+        self.M_slow_0_bins = M_total * vol_arr * (1.0 - shell_acc_arr)
+        self.M_fast_0 = float(np.sum(self.M_fast_0_bins))
+        self.M_slow_0 = float(np.sum(self.M_slow_0_bins))
+        self.M_sol_0 = self.M_fast_0 + self.M_slow_0
+        # 診斷：measured PSD 幾何直接決定的 fast pool 佔比（無任何旋鈕）
+        self.fast_pool_mass_fraction = (
+            self.M_fast_0 / self.M_sol_0 if self.M_sol_0 > 0 else 0.0
+        )
 
     def axial_layer_fractions(self) -> np.ndarray:
         """
@@ -884,30 +997,49 @@ class V60Params(V60Constant):
         self.V_bed    = self.cone_bed_volume_m3()                 # 粉床幾何體積 [m³]
         self.V_liquid = self.phi * self.V_bed                      # 孔隙水量 [m³]
         self.rho_bulk_dry_g_ml = self.dry_bulk_density_g_ml()
-        # 顆粒子模型：優先使用實測 PSD bins；否則退回量測 D10 或理想碎形 PSD。
+        # 顆粒子模型：優先使用實測 PSD bins；否則退回單一代表性粒徑。
+        #
+        # 尺度來源（2026-05 PSD 管線重寫）：
+        #   - 有 bins CSV 時，PSD 的絕對尺度**完全**由該 CSV 決定，只受顯式
+        #     `psd_diameter_scale` 縮放。不再由 `D10_measured_m` 反推縮放倍率。
+        #   - 「相對量」（surface_area_ratio、shell_accessibility_ratio 等）一律
+        #     以當前 measured PSD 自身為基準（比值恆為 1）。舊實作把 reference
+        #     由 `k_ref` 反推成一個虛構的 250 μm 粒子，等於讓一個 closure 參數
+        #     決定量測幾何的參考點——那是循環依賴，不是 measured PSD。
+        #   - 絕對量（surface_area_spec、shell_fraction_abs、diffusion_path_*）
+        #     直接來自 bins，不經任何參考縮放。
         measured_bins_native = None
-        measured_bin_rows_scaled = None
+        measured_bin_rows = None
+        psd_scale = max(float(self.psd_diameter_scale), 1e-9)
         if self.psd_bins_csv_path:
-            measured_bins_native = self._particle_stats_from_bins_csv(self.psd_bins_csv_path, diameter_scale=1.0)
+            measured_bins_native = self._particle_stats_from_bins_csv(
+                self.psd_bins_csv_path, diameter_scale=psd_scale
+            )
+            measured_bin_rows = self._load_psd_bin_rows(self.psd_bins_csv_path, diameter_scale=psd_scale)
 
+        # number-based D10：診斷量。受影像偵測下限鉗制，不驅動任何幾何。
         if self.D10_measured_m is not None:
             self.D10 = max(float(self.D10_measured_m), self.particle_d_min)
         elif measured_bins_native is not None:
             self.D10 = max(float(measured_bins_native["D10_m"]), self.particle_d_min)
         else:
             self.D10 = np.sqrt(max(self.k, 1e-18) / max(self.f_sp * self.phi**self.eta_porosity, 1e-18))
-        self.k_from_D10 = self.f_sp * (self.D10 ** 2) * (self.phi ** self.eta_porosity)
-        ref_D10 = np.sqrt(max(self.k_ref, 1e-18) / max(self.f_sp * self.phi**self.eta_porosity, 1e-18))
+
         if measured_bins_native is not None:
-            native_D10 = max(float(measured_bins_native["D10_m"]), self.particle_d_min)
-            particle_scale = self.D10 / native_D10
-            ref_scale = ref_D10 / native_D10
-            particle = self._particle_stats_from_bins_csv(self.psd_bins_csv_path, diameter_scale=particle_scale)
-            ref_particle = self._particle_stats_from_bins_csv(self.psd_bins_csv_path, diameter_scale=ref_scale)
-            measured_bin_rows_scaled = self._load_psd_bin_rows(self.psd_bins_csv_path, diameter_scale=particle_scale)
+            particle = measured_bins_native
+            # 相對量以自身為基準：measured PSD 就是這個 case 的參考幾何。
+            ref_particle = measured_bins_native
         else:
-            ref_particle = self._single_bin_particle_stats(ref_D10)
             particle = self._single_bin_particle_stats(self.D10)
+            ref_particle = particle
+        # 模型尺度錨點：Sauter d32（決定比表面積）與體積中位徑 Dv50。
+        self.d32 = max(float(particle["d32_m"]), self.particle_d_min)
+        self.Dv50 = max(float(particle["Dv50_m"]), self.particle_d_min)
+        self.psd_throat_diameter_m = float(particle["throat_diameter_m"])
+        # k 的 PSD 先驗尺度：Kozeny-Carman 型 k = f_sp·d²·φ^η，以 d32 為特徵粒徑。
+        self.k_from_d32 = self.f_sp * (self.d32 ** 2) * (self.phi ** self.eta_porosity)
+        # 舊名 alias（deprecated，保留一個週期供既有診斷/報表呼叫端過渡）
+        self.k_from_D10 = self.k_from_d32
         self.surface_area_spec = particle["surface_area"]
         self.ref_surface_area_spec = ref_particle["surface_area"]
         self.surface_area_ratio = self.surface_area_spec / max(self.ref_surface_area_spec, 1e-12)
@@ -949,56 +1081,29 @@ class V60Params(V60Constant):
         self.ref_psd_throat_clog_index = ref_particle.get("throat_clog_index", np.nan)
         self.ref_psd_deposition_clog_index = ref_particle.get("deposition_clog_index", np.nan)
         self.ref_psd_fast_pool_fraction = ref_particle.get("fast_pool_fraction", np.nan)
-        # 固相溶質耗盡模型
-        # 多組分可萃量分流：
-        # - fast pool 主要來自外層較易接觸的可溶物，吃完整 shell penalty
-        # - slow pool 代表較深層、較慢釋出的可溶物，受 shell penalty 影響但較弱
-        # 2026-05-01 P1 修正：原 slow_access_ratio = 0.5*(1+shell_ratio) 在 shell_ratio→0
-        #   時還保留 0.5 floor，物理上不合理（shell 完全堵死時 slow pool 不該還有 50% 可萃）。
-        #   改為 `slow_access_ratio = shell_ratio ** alpha_slow_access`，alpha < 1 表示
-        #   slow 對 shell penalty 比 fast 弱（fast 是 alpha=1）。預設 alpha=0.7。
-        if np.isfinite(self.psd_fast_pool_fraction) and np.isfinite(self.ref_psd_fast_pool_fraction):
-            psd_fast_shift = (self.psd_fast_pool_fraction / max(self.ref_psd_fast_pool_fraction, 1e-12)) ** 0.25
-        else:
-            psd_fast_shift = 1.0
-        self.fast_fraction_effective = float(np.clip(self.fast_fraction * psd_fast_shift, 0.12, 0.78))
-        fast_access_ratio = self.shell_accessibility_ratio
-        # alpha_slow_access = 0.7：slow pool 對 shell penalty 的次方，0=完全免疫、1=和 fast 一樣
-        alpha_slow_access = 0.7
-        slow_access_ratio = max(self.shell_accessibility_ratio, 1e-6) ** alpha_slow_access
-        self.M_fast_0 = self.dose_g * self.max_EY * self.fast_fraction_effective * fast_access_ratio
-        self.M_slow_0 = self.dose_g * self.max_EY * (1.0 - self.fast_fraction_effective) * slow_access_ratio
-        self.M_sol_0 = self.M_fast_0 + self.M_slow_0
-        # κ = C_sat_0 / M_sol_0 [L⁻¹]；C_sat_eff(t) = κ·M_sol(t)
-        # 單位：[g/L] / [g] = [1/L]（與 SI：k_ext[m³/s]×C_sat[kg/m³] 一致）
-        # dose_g=0（用於 baseline 對比）時退化為純流體模型，不需萃取
-        # 保留舊 kappa（單組分，backward compat）
-        self.kappa = (self.C_sat / self.M_sol_0) if self.M_sol_0 > 0 else 0.0
-        # Noyes-Whitney 參考校準：以中研磨參考幾何反推無因次效率因子
-        # k_NW = η * A_eff * D / L，其中 η 吸收 tortuosity / 未建模阻力 / 單位校準
-        A_fast_ref = self.noyes_whitney_area(slow=False, use_reference=True)
-        A_slow_ref = self.noyes_whitney_area(slow=True, use_reference=True)
-        L_fast_ref = self.noyes_whitney_length(slow=False, use_reference=True)
-        L_slow_ref = self.noyes_whitney_length(slow=True,  use_reference=True)
-        D_fast_ref = self.diffusion_coeff(self.T_ref, slow=False)
-        D_slow_ref = self.diffusion_coeff(self.T_ref, slow=True)
-        nw_fast_ref = A_fast_ref * D_fast_ref / max(L_fast_ref, 1e-18)
-        nw_slow_ref = A_slow_ref * D_slow_ref / max(L_slow_ref, 1e-18)
-        self.nw_eta_fast = self.k_ext_fast_coef / max(nw_fast_ref, 1e-18)
-        self.nw_eta_slow = self.k_ext_slow_coef / max(nw_slow_ref, 1e-18)
+        # 固相溶質的兩池分配（F3）：
+        #   M_fast_0,i = dose·max_EY·vol_frac_i·shell_acc_i
+        #   M_slow_0,i = dose·max_EY·vol_frac_i·(1 − shell_acc_i)
+        # 由 `_set_extraction_bins()` 在下方統一計算並回填 M_fast_0 / M_slow_0 /
+        # M_sol_0。此處**不再**有 fast_fraction、shell_accessibility_ratio、
+        # alpha_slow_access 這三層與 PSD 無關的縮放（AUD-3：它們與 `max_EY`
+        # 完全簡併，是 `max_EY_fit = 0.3725` 超物理上限的直接成因）。
+        self.psd_clog_index_value = self.psd_clog_index()
         self.k_beta_prior_psd = self.k_beta_prior_from_psd()
+        self.k_beta_prior_sigma_dex = KBETA_PRIOR_SIGMA_DEX
+        # throat / deposition 的權重分配直接取兩個絕對指數的比例。
+        # Why: 兩者已是同一個飽和堵塞核 1/(1+d/d_throat) 的無因次加權平均，
+        #      只差在權重為 number（喉道事件）或 volume（沉積回填），可直接比較。
+        #      舊實作除以一個虛構 reference PSD，在 reference 改為自身後會退化成
+        #      固定 50/50，等於把 PSD 資訊丟掉。
         throat = getattr(self, "psd_throat_clog_index", np.nan)
         deposition = getattr(self, "psd_deposition_clog_index", np.nan)
-        throat_ref = getattr(self, "ref_psd_throat_clog_index", np.nan)
-        deposition_ref = getattr(self, "ref_psd_deposition_clog_index", np.nan)
-        if all(np.isfinite(v) for v in (throat, deposition, throat_ref, deposition_ref)):
-            throat_rel = throat / max(throat_ref, 1e-12)
-            deposition_rel = deposition / max(deposition_ref, 1e-12)
+        if np.isfinite(throat) and np.isfinite(deposition):
+            throat_rel = max(float(throat), 1e-6)
+            deposition_rel = max(float(deposition), 1e-6)
         else:
             throat_rel = 1.0
             deposition_rel = 1.0
-        throat_rel = max(throat_rel, 1e-6)
-        deposition_rel = max(deposition_rel, 1e-6)
         split_sum = throat_rel + deposition_rel
         self.k_beta_throat_share = float(np.clip(throat_rel / split_sum, 0.15, 0.85))
         self.k_beta_deposition_share = float(np.clip(1.0 - self.k_beta_throat_share, 0.15, 0.85))
@@ -1009,18 +1114,33 @@ class V60Params(V60Constant):
         self.k_beta_deposition_coeff = float(self.k_beta * self.k_beta_deposition_share)
         self.k_beta_throat_prior = float(self.k_beta_prior_psd * self.k_beta_throat_share)
         self.k_beta_deposition_prior = float(self.k_beta_prior_psd * self.k_beta_deposition_share)
-        # κ for each component（溫度相依，在方法中計算；此處存 ref 值）
-        self.kappa_fast = (self.C_sat_fast / self.M_fast_0) if self.M_fast_0 > 0 else 0.0
-        self.kappa_slow = (self.C_sat_slow / self.M_slow_0) if self.M_slow_0 > 0 else 0.0
         # 咖啡粉等效熱容體積：V_equiv = m_coffee × Cp_coffee / (ρ_water × Cp_water)
         # Why: 悶蒸時乾粉（常溫）吸收熱水熱量，換算為等效水體積後加入熱動方程分母
         #      Cp_water ≈ 4180 J/(kg·K)；dose_g [g] = dose_g×1e-3 [kg]
         self.V_equiv_coffee = self.solid_water_equivalent_ml(self.dose_g, self.Cp_coffee / 1000.0) * 1e-6  # [m³]
         self.V_equiv_dripper = self.solid_water_equivalent_ml(self.dripper_mass_g, self.dripper_cp_J_gK) * 1e-6  # [m³]
-        if measured_bin_rows_scaled is not None:
-            self._set_extraction_bins(self._build_extraction_bins_from_rows(measured_bin_rows_scaled))
+        # ── Class B（先算再固定）：孔喉尺度與床層保水頭 ──────────────────────────
+        # What: 由 measured PSD 的 canonical Sauter 平均徑 `d32` 推代表性孔喉半徑，
+        #       再由 Young-Laplace 得床層毛細保水頭 h_cap_bed = 2σ/(ρ g r_pore)。
+        # Why:  「濕床能不能被重力排乾」是可由量測直接判定的事，不該交給 closure 猜。
+        #       kinu29：d32 = 893.8 μm → r_pore ≈ 179 μm → h_cap_bed ≈ 68 mm > h_bed 53 mm，
+        #       故殘餘飽和度 S_r = 1，床層孔隙水不會在沖煮時間尺度內被重力排空。
+        d_char = float(getattr(self, "d32", 0.0)) or float(self.D10)
+        self.pore_radius_m = max(float(self.pore_radius_ratio) * d_char, 1e-9)
+        self.h_cap_bed_ref = self.h_cap_bed(self.T_ref)
+        # 體積熱容 [J/(m³·K)]：焓平衡與能量審計共用同一個縮放，避免兩處各寫一次 4180
+        self.rho_cp_water = RHO * CP_WATER
+        # 萃取 bins 必須在此處建立：它同時決定 M_fast_0 / M_slow_0 / M_sol_0，
+        # 而下面的 κ 與堵塞權重都依賴這些量。
+        if measured_bin_rows is not None:
+            self._set_extraction_bins(self._build_extraction_bins_from_rows(measured_bin_rows))
         else:
             self._set_extraction_bins()
+        # κ = C_sat_0 / M_sol_0 [L⁻¹]（單組分 backward-compat 診斷量）
+        # dose_g = 0（純流體 baseline 對比）時退化為 0，不需萃取。
+        self.kappa = (self.C_sat / self.M_sol_0) if self.M_sol_0 > 0 else 0.0
+        self.kappa_fast = (self.C_sat_fast / self.M_fast_0) if self.M_fast_0 > 0 else 0.0
+        self.kappa_slow = (self.C_sat_slow / self.M_slow_0) if self.M_slow_0 > 0 else 0.0
         (
             self.clog_throat_weights,
             self.clog_deposition_weights,
@@ -1034,7 +1154,8 @@ class V60Params(V60Constant):
 
         What:
           將沒有 measured PSD 時的 fallback 也收斂到「同一套 bin 模型」：
-          - 代表直徑直接取 D10
+          - 代表直徑取唯一已知的粒徑尺度（使用者給的 `D10_measured_m`，
+            或由 `k` 反推的等效粒徑），並同時當作該退化 PSD 的 d32
           - 形狀預設為近球形
           - shell / core 幾何依 200 μm 殼層直接解析計算
 
@@ -1053,8 +1174,10 @@ class V60Params(V60Constant):
         fines_flag_030 = float(d < 0.30e-3)
         fines_flag_040 = float(d < 0.40e-3)
         fines_flag_050 = float(d < 0.50e-3)
-        throat_index = min(0.45 / max(d * 1e3, 1e-9), 2.0)
-        deposition_index = min(0.55 / max(d * 1e3, 1e-9), 1.8)
+        d_throat_mm = self.throat_diameter_from_d32(d * 1e3)
+        clog_kernel = 1.0 / (1.0 + (d * 1e3) / max(d_throat_mm, 1e-12))
+        throat_index = float(clog_kernel)
+        deposition_index = float(clog_kernel)
         return {
             "surface_area": float(surface_area),
             "surface_area_fast": float(surface_area * shell_fraction),
@@ -1079,6 +1202,9 @@ class V60Params(V60Constant):
             "deposition_clog_index": float(deposition_index),
             "fast_pool_fraction": float(shell_fraction),
             "fine_diameter_mean_m": float(d),
+            "d32_m": float(d),
+            "Dv50_m": float(d),
+            "throat_diameter_m": float(d_throat_mm * 1e-3),
             "source": "synthetic_single_bin",
             "diameter_scale": 1.0,
         }
@@ -1086,6 +1212,10 @@ class V60Params(V60Constant):
     def saturation(self, V_poured: float) -> float:
         """
         累積注水量對飽和目標的平滑上限 sat_target ∈ [0, 1]。C¹ 連續。
+
+        DEPRECATED（主 ODE 路徑）：顆粒吸水量 `V_abs` 自 F2 起是顯式狀態，
+        由 `absorption_rate()` 的動力學/供給雙重限制決定，不再由 `V_poured` 代數推得。
+        本式保留為向後相容的代數 closure（舊分析腳本與 `V_dry`/`V_full` 語意展示）。
 
         What: cubic Hermite smooth-step：
               x = clamp((V_poured - V_dry) / (V_full - V_dry), 0, 1)
@@ -1127,50 +1257,214 @@ class V60Params(V60Constant):
         sat_flow = np.clip(sat_flow, 0.0, 1.0)
         return float(sat_flow) if sat_flow.ndim == 0 else sat_flow
 
-    def bed_drive_components(self, h, T_K=None, t_sec: float = 0.0, sat=None) -> dict:
+    # ── F2b：床內 mobile / immobile 雙水池閉合 ────────────────────────────────
+    def wetting_rate(self, w: float, V_retained: float) -> float:
+        """
+        床層潤濕狀態 w 的成長速率 [1/s]。
+
+        What:
+            dw/dt = (1 − w)/τ_wet · g(液相在場)
+            g     = smoothstep( V_retained / V_dry )，V_retained = 滯留在濾杯內的總水量
+
+        Why:
+            w 是「粉床已建立保水／吸水能力的比例」，它必須由液體接觸驅動——
+            乾床放著不會自己潤濕，所以要 g gate，而不是寫成 w = 1 − exp(−t/τ)。
+            g 的參考量取 `V_dry`（= dose × absorb_dry_ratio，Class B 量測值），
+            語意是「床層已吃進 O(V_dry) 的水 ⇒ 液相確實在場」，不新增常數。
+            用總滯留水（含床頂積水）而非床內液量，是為了避免 t = 0 的死結：
+            床內液量為 0 → w = 0 → 容量為 0 → 床內液量永遠是 0。
+        """
+        w_c = float(np.clip(w, 0.0, 1.0))
+        x = float(np.clip(max(float(V_retained), 0.0) / max(self._V_dry, 1e-12), 0.0, 1.0))
+        contact = x * x * (3.0 - 2.0 * x)
+        return contact * (1.0 - w_c) / max(float(self.tau_wet_s), 1e-6)
+
+    def bed_retention_fraction(self, T_K=None) -> float:
+        """
+        床層中可被毛細力留住（不被重力排乾）的高度分率 [-]。
+
+        What: f_retain = clip(h_cap_bed(T) / h_bed, 0, 1)
+
+        Why:  Young-Laplace 保水頭 h_cap_bed 代表「毛細力能把水柱撐住的高度」。
+              床高 h_bed 若不超過它，整床都留得住（f_retain = 1，kinu29：68.6 > 53 mm）；
+              若換粗研磨使 h_cap_bed < h_bed，只有下方 h_cap_bed 那一段留得住，
+              上方自排。這條式子讓 h_cap_bed 從「診斷量」變回主方程裡的物理量，
+              且在兩個 regime 之間連續，不需要分支。
+        """
+        return float(np.clip(self.h_cap_bed(T_K) / max(self.h_bed, 1e-12), 0.0, 1.0))
+
+    def immobile_capacity(self, w: float, T_K=None) -> float:
+        """毛細保水（immobile）水池的上限 [m³]：φ·V_bed · f_retain(T) · w。"""
+        return self.V_liquid * self.bed_retention_fraction(T_K) * float(np.clip(w, 0.0, 1.0))
+
+    def absorb_capacity(self, w: float) -> float:
+        """顆粒吸收水池的上限 [m³]：V_full · w（潤濕/溶脹尚未完成時吸不滿）。"""
+        return self._V_full * float(np.clip(w, 0.0, 1.0))
+
+    def mobile_capacity(self, V_imm: float) -> float:
+        """mobile 孔隙水的可用空間 [m³]：φ·V_bed − V_imm（兩池共用同一孔隙體積）。"""
+        return max(self.V_liquid - max(float(V_imm), 0.0), 0.0)
+
+    def mobile_saturation(self, V_mob: float, V_imm: float):
+        """
+        mobile 孔隙飽和度 S_mob ∈ [0,1]，供 `relative_permeability` 與床內驅動頭使用。
+
+        What: S_mob = V_mob / max(φ·V_bed − V_imm, ε)
+
+        Why:  這正是 Corey 的有效飽和度 S_e = (S − S_r)/(1 − S_r)，
+              只是 S_r 不再是常數，而是由 `V_imm` 顯式攜帶的時序量。
+              因此 `sat_rel_perm_residual` 必須是 0，否則同一份保水被記兩次。
+        """
+        cap = np.maximum(self.V_liquid - np.maximum(np.asarray(V_imm, dtype=float), 0.0),
+                         1e-3 * self.V_liquid)
+        s = np.clip(np.maximum(np.asarray(V_mob, dtype=float), 0.0) / cap, 0.0, 1.0)
+        return float(s) if np.ndim(s) == 0 else s
+
+    def absorption_rate(self, V_abs: float, w: float, Q_in: float, V_free: float, V_mob: float, T_K: float):
+        """
+        顆粒吸水速率 [m³/s]，以及其中由自由水 / mobile 孔隙水供給的部分。
+
+        What:
+            τ_abs   = tau_cap_T(T)                              （Lucas-Washburn 溫度相依）
+            kinetic = (V_full·w − V_abs) / τ_abs                 （動力學上限，容量隨潤濕開放）
+            supply  = Q_in + (V_free + V_mob) / τ_abs            （供給上限）
+            A       = smooth_min(kinetic, supply)
+            A_free, A_mob = A × 各來源佔 supply 的比例
+
+        Why:
+            容量改吃 `V_full·w` 是本 slice 的核心修正：舊式以 τ_cap ≈ 10 s 直衝 V_full = 24 mL，
+            t = 30 s 就吸掉 22 mL，但量測當下**總**保水只有 14.6 g——
+            吸水量在物理上不可能超過總保水。把容量掛在潤濕狀態上之後，
+            「初期吸不多、後段才吸滿」與 retained_mass_g 的時序一致。
+            回傳來源分攤仍是為了讓各水池的非負性由構造保證（抽取率 ≤ 存量/τ）。
+            注意 immobile 池不是吸水來源：immobile 的定義是「不會再離開孔隙的水」，
+            這裡的「不離開」指不被重力排出，而顆粒吸收是另一條路徑；
+            把它排除在供給外只是避免第二條耦合，且量級上由 mobile/free 供給已足夠。
+
+        Returns:
+            (A_total, A_from_free, A_from_mob)，單位皆為 m³/s。
+        """
+        tau = max(self.tau_cap_T(T_K), 1e-6)
+        gap = max(self.absorb_capacity(w) - max(float(V_abs), 0.0), 0.0)
+        s_in = max(float(Q_in), 0.0)
+        s_free = max(float(V_free), 0.0) / tau
+        s_mob = max(float(V_mob), 0.0) / tau
+        supply = s_in + s_free + s_mob
+        rate = max(float(smooth_min(gap / tau, supply, RATE_SMOOTH_EPS)), 0.0)
+        inv = 1.0 / max(supply, 1e-18)
+        return rate, rate * s_free * inv, rate * s_mob * inv
+
+    def immobile_capture_rate(self, V_mob: float, V_imm: float, w: float, T_K: float) -> float:
+        """
+        mobile → immobile 的毛細捕捉速率 [m³/s]（恆非負，且只從 mobile 抽取）。
+
+        What:
+            gap  = max(φ·V_bed·f_retain·w − V_imm, 0)
+            C    = smooth_min(gap / τ_cap(T), V_mob / τ_cap(T))
+
+        Why:
+            毛細保水的水一定先是穿過床層的 mobile 水，被孔喉的 Young-Laplace 壓差
+            扣留下來才變成 immobile；因此這是床內轉換，不改變床內總液量，
+            也不可能讓 V_mob + V_imm 超過 φ·V_bed（結構上保證）。
+            容量隨 w 開放，是「剛潤濕的床留不住水、潤濕後才留得住」的直接寫法——
+            這正是量測 t = 10 → 30 s 床層淨排出 24 mL、t = 142 s 卻保水 52 g 的來源。
+        """
+        tau = max(self.tau_cap_T(T_K), 1e-6)
+        gap = max(self.immobile_capacity(w, T_K) - max(float(V_imm), 0.0), 0.0)
+        return max(float(smooth_min(gap / tau, max(float(V_mob), 0.0) / tau, RATE_SMOOTH_EPS)), 0.0)
+
+    def pore_fill_rate(self, V_mob: float, V_imm: float, Q_perc: float, V_free: float):
+        """
+        mobile 孔隙的填充速率 [m³/s] 及其中由自由水供給的部分。
+
+        What:
+            gap    = φ·V_bed − V_imm − V_mob
+            supply = max(Q_perc, 0) + V_free / TRANSFER_TAU_S
+            P      = smooth_min(gap / TRANSFER_TAU_S, supply)
+            P_free = P × (V_free/τ) / supply
+
+        Why:
+            濕床的滲入是 Darcy 尺度的過程（秒），不是毛細吸收尺度（τ_cap ≈ 10 s）：
+            若用 τ_cap 當填充率上限，床內 mobile 水最多只能以 φV_bed/τ_cap ≈ 2 mL/s
+            被補充，主沖煮段 5 mL/s 的出流就會被儲水補給憑空掐死。
+            這裡沒有再放「乾粉先吸飽 V_dry 才填孔隙」的 gate：
+            量測顯示第一滴在 t = 5 s（悶蒸注水才 31.7 mL）就落地，
+            乾床本來就會讓水穿過；出液早期之所以少，是 kr(S_mob) 與 h_gas 的作用，
+            不是孔隙拒絕充填。
+
+        Returns:
+            (P_total, P_from_free)，單位皆為 m³/s。
+        """
+        tau = TRANSFER_TAU_S
+        gap = max(self.mobile_capacity(V_imm) - max(float(V_mob), 0.0), 0.0)
+        s_stream = max(float(Q_perc), 0.0)
+        s_free = max(float(V_free), 0.0) / tau
+        supply = s_stream + s_free
+        rate = max(float(smooth_min(gap / tau, supply, RATE_SMOOTH_EPS)), 0.0)
+        return rate, rate * s_free / max(supply, 1e-18)
+
+    def bed_drive_components(self, h_free, T_K=None, t_sec: float = 0.0, sat=None) -> dict:
         """
         粉床主流與快路徑共用的驅動頭分解。
 
         What:
-            h_eff = softplus(h - h_threshold_eff + h_cap_wet)
+            h_bed_drive = S_mob · h_bed
+            raw_head    = h_free + h_bed_drive − h_threshold_eff + h_cap_wet
+            h_eff       = softplus(raw_head)
 
-        Why:
-            主 Darcy 路徑與偏流快路徑都受同一個床層水頭、
-            毛細門檻與 CO₂ 背壓控制；抽成共用 closure 可避免
-            雙路徑各自維護一套不一致的壓力頭邏輯。
+        Why（F2b 修正 F2 的驅動頭錯誤）:
+            床層底部是濾紙出口、壓力為大氣壓，床頂為自由水面，因此穿床的**總水頭差**
+            就是「頂部壓力頭 + 高程差」= h_free + h_bed。F2 把毛細保水頭 h_cap_bed
+            從驅動頭裡減掉，是把兩件事混為一談：
+              - h_cap_bed 決定的是「沒有積水之後，床內水會不會繼續被重力排出」，
+                亦即殘餘飽和度有多大 —— 它是 `V_imm` 的容量來源（見 `bed_retention_fraction`）；
+              - 它不是穿床的壓力梯度。把它從梯度裡扣掉，等於宣稱 h_cap_bed > h_bed
+                的細研磨床「完全不導水」，與 Darcy 不符，也逼得 k 必須上調 4.5×。
+            現在床內只剩 mobile 水參與驅動，其連通程度用 S_mob 表示：
+            S_mob → 1（床內飽和）給出完整的 h_bed 高程頭；
+            S_mob → 0（mobile 水排乾、只剩 immobile）驅動頭退回 h_free，
+            再配合 kr(S_mob) → 0，出流自然終止 —— 終止條件仍不需要任何 clamp。
+
+        Args:
+            h_free : 粉床頂部以上的自由水柱高度 [m]（不是總水位）
+            sat    : 床內 **mobile** 孔隙飽和度 S_mob ∈ [0,1]（見 `mobile_saturation`）
         """
         if T_K is None:
             T_K = self.T_brew
-        h_arr = np.asarray(h, dtype=float)
+        h_free_arr = np.maximum(np.asarray(h_free, dtype=float), 0.0)
         T_arr = np.asarray(T_K, dtype=float)
         t_arr = np.asarray(t_sec, dtype=float)
         if sat is None:
-            wet_gate = np.zeros_like(h_arr, dtype=float)
+            s_mob = np.zeros_like(h_free_arr, dtype=float)
         else:
-            wet_gate = np.clip((np.asarray(sat, dtype=float) - 0.85) / 0.15, 0.0, 1.0)
+            s_mob = np.clip(np.asarray(sat, dtype=float), 0.0, 1.0)
+        wet_gate = np.clip((s_mob - 0.85) / 0.15, 0.0, 1.0)
 
         h_threshold = self.h_cap + self.h_gas(t_arr)
-        wet_span = np.clip(h_arr / max(self.h_bed, 1e-12), 0.0, 1.0)
+        # 濕床毛細驅動頭：正比於床層已建立連通液相的比例（S_mob），
+        # 舊版用 h/h_bed 當代理量，在新狀態下 h_free 與床層浸潤程度已無關。
         h_cap_wet = (
             self.darcy_capillary_gain
             * self.darcy_capillary_coeff(T_arr)
-            * (0.5 * self.h_bed * wet_span)
+            * (0.5 * self.h_bed * s_mob)
             * wet_gate
         )
         h_threshold_eff = h_threshold * (1.0 - 0.55 * wet_gate)
-        raw_head = h_arr - h_threshold_eff + h_cap_wet
-        eps = max(self.h_cap * 0.25, 1e-6)
+        h_bed_drive = s_mob * self.h_bed
+        raw_head = h_free_arr + h_bed_drive - h_threshold_eff + h_cap_wet
+        eps = HEAD_SOFTPLUS_EPS_M
         h_eff = eps * np.logaddexp(0.0, raw_head / eps)
         return {
             "wet_gate": float(wet_gate) if np.ndim(wet_gate) == 0 else wet_gate,
             "h_threshold": float(h_threshold) if np.ndim(h_threshold) == 0 else h_threshold,
             "h_threshold_eff": float(h_threshold_eff) if np.ndim(h_threshold_eff) == 0 else h_threshold_eff,
             "h_cap_wet": float(h_cap_wet) if np.ndim(h_cap_wet) == 0 else h_cap_wet,
+            "h_bed_drive": float(h_bed_drive) if np.ndim(h_bed_drive) == 0 else h_bed_drive,
             "raw_head": float(raw_head) if np.ndim(raw_head) == 0 else raw_head,
             "h_eff": float(h_eff) if np.ndim(h_eff) == 0 else h_eff,
         }
 
-    def bed_drive_head(self, h, T_K=None, t_sec: float = 0.0, sat=None):
+    def bed_drive_head(self, h_free, T_K=None, t_sec: float = 0.0, sat=None):
         """
         粉床主流與快路徑共用的有效驅動水頭。
 
@@ -1180,24 +1474,26 @@ class V60Params(V60Constant):
         Why:
             讓主流程繼續使用單一標量 closure，同時 diagnostics 可讀取完整分解。
         """
-        comps = self.bed_drive_components(h, T_K=T_K, t_sec=t_sec, sat=sat)
+        comps = self.bed_drive_components(h_free, T_K=T_K, t_sec=t_sec, sat=sat)
         h_eff = comps["h_eff"]
         return float(h_eff) if np.ndim(h_eff) == 0 else h_eff
 
     def relative_permeability(self, sat):
         """
-        未飽和床層的相對滲透率 `kr(sat)`。
+        未飽和床層的相對滲透率 `kr(S_mob)`。
 
         What:
             以 Corey 型 closure 表示：
-              S_e = clamp((sat - s_r) / (1 - s_r), 0, 1)
+              S_e = clamp((S_mob - s_r) / (1 - s_r), 0, 1)
               kr  = smoothstep(S_e) ^ n
+            自變數是 **mobile** 飽和度（見 `mobile_saturation`），s_r 結構上為 0。
 
         Why:
             `bed_drive_head()` 處理的是壓力頭何時足以推動液體，
-            但未飽和 Darcy 還需要一個顯式的導水能力衰減 `kr(sat)`。
-            這樣 bloom 前的低飽和區就不再只靠壓力頭 cutoff，
-            而是同時反映液相連通度尚未建立的事實。
+            但未飽和 Darcy 還需要一個顯式的導水能力衰減 `kr`。
+            自變數必須是 mobile 飽和度而不是總飽和度：毛細扣留的 immobile 水
+            佔著孔隙卻不導流，用總飽和度會把「床內水多」誤讀成「導水能力強」。
+            這也是 F2 §6 兩條失敗路徑的共同根因。
         """
         sat_arr = np.clip(np.asarray(sat, dtype=float), 0.0, 1.0)
         s_r = np.clip(float(self.sat_rel_perm_residual), 0.0, 0.95)
@@ -1275,14 +1571,87 @@ class V60Params(V60Constant):
         """錐體體積 V(h) = (π/3)·tan²θ·h³ [m³]"""
         return (np.pi / 3) * self._tan2 * h ** 3
 
-    # ── 修正 [3][8] 有效滲透率（細粉遷移 × 顆粒溶脹）────────────────────────
-    def phi_effective(self, sat: float = 1.0, h: float | None = None):
+    def h_cap_bed(self, T_K=None):
         """
-        綜合有效孔隙率：溶脹（與 sat 有關）+ 壓差壓實（與 h 有關，可逆）
+        床層孔隙的 Young-Laplace 保水頭 [m]。
+
+        What: h_cap_bed(T) = 2σ(T) / (ρ g r_pore)，r_pore = pore_radius_ratio × d32。
+
+        Why:  決定「沒有積水之後，床內水能不能被重力排乾」，亦即殘餘（immobile）
+              飽和度有多大：`bed_retention_fraction()` 把它轉成可保水的床高分率。
+              此量由 measured PSD 直接算出（Class B），不是可調 closure。
+              注意它 **不** 從穿床驅動頭裡扣除（F2 的錯誤）：床層兩端的水頭差
+              由邊界條件決定，毛細保水只決定殘餘飽和度。
+        """
+        if T_K is None:
+            T_K = self.T_ref
+        r_pore = max(float(getattr(self, "pore_radius_m", 0.0)), 1e-9)
+        sigma = self.sigma_water(T_K)
+        return 2.0 * sigma / (RHO * G * r_pore)
+
+    def h_free_from_volume(self, V_free):
+        """
+        由床頂以上自由水體積反解自由水柱高度 [m]。
+
+        What: 解 cone(h_bed + h_free) − cone(h_bed) = V_free，取解析立方根。
+        Why:  儲水方程改以體積為狀態後，水位變成後處理量；
+              解析反解比 Newton 迭代便宜且在 V_free → 0 時仍精確。
+        """
+        V = np.maximum(np.asarray(V_free, dtype=float), 0.0)
+        h_total = ((V + self.V_bed) * 3.0 / (np.pi * self._tan2)) ** (1.0 / 3.0)
+        h_free = np.maximum(h_total - self.h_bed, 0.0)
+        return float(h_free) if np.ndim(h_free) == 0 else h_free
+
+    def wetted_height(self, S_bed, h_free):
+        """
+        濕潤錐面對應的等效水位 [m]。
+
+        What: h_wet = h_bed·S_bed^(1/3) + h_free
+              （床內以等體積錐面表示潤濕前沿，床頂以上直接加自由水柱）
+
+        Why:  濾杯側面的熱交換面積與 viz 的 `h_mm` 都需要單一「水位」語意。
+              注意這裡刻意用「相加」而非 `if S_bed < 1 ... else ...` 的分段式：
+              S_bed 是漸近趨近 1 的 ODE 狀態，永遠差一點點才等於 1，
+              分段式會讓 h_free 整段被丟掉（實測峰值水位因此卡在 h_bed = 53 mm，
+              而不是真值 66.7 mm）。相加形式在 S_bed → 1 時給出 h_bed + h_free，
+              在無積水時給出純潤濕前沿，兩端都正確且處處連續。
+        """
+        S = np.clip(np.asarray(S_bed, dtype=float), 0.0, 1.0)
+        hf = np.maximum(np.asarray(h_free, dtype=float), 0.0)
+        h = self.h_bed * S ** (1.0 / 3.0) + hf
+        return float(h) if np.ndim(h) == 0 else h
+
+    def wetted_area(self, h_total):
+        """
+        濕潤錐側面積 A_wet(h) = π·r(h)·slant(h) = π·tanθ/cosθ·h² [m²]。
+
+        What: 液體與濾杯實際接觸的側壁面積，隨水位平方成長。
+        Why:  濾杯熱交換是界面現象；把面積顯式寫出來，界面熱傳係數 U 才有
+              可辯護的物理區間，不必吞掉幾何隨時間的變化。
+        """
+        h = np.maximum(np.asarray(h_total, dtype=float), 0.0)
+        cos_theta = np.cos(np.radians(self.half_angle_deg))
+        a = np.pi * (self._tan / max(cos_theta, 1e-12)) * h ** 2
+        return float(a) if np.ndim(a) == 0 else a
+
+    # ── 修正 [3][8] 有效滲透率（細粉遷移 × 顆粒溶脹）────────────────────────
+    def phi_effective(self, sat: float = 1.0, h_free: float | None = None):
+        """
+        綜合有效孔隙率：溶脹（與顆粒吸水率 sat 有關）+ 壓差壓實（與 h_free 有關，可逆）
+
+        Args:
+            sat    : 顆粒吸水飽和度 V_abs / V_full（溶脹的真正驅動量）
+            h_free : 床頂以上自由水柱高度 [m]（壓差壓實的驅動量）
+
+        Why: 溶脹來自顆粒吸水，壓實來自床頂的額外壓差；舊版第二參數是總水位 h，
+             需在函式內再減一次 h_bed 才得到自由水柱，語意藏在實作裡。
+             直接吃 h_free 後，兩個機制各自對應一個可獨立推理的輸入。
+             註：此為滲透率用的有效孔隙率；孔隙「儲水容量」一律用名目 φ，
+             否則 dφ_eff/dt 會讓水量帳不再精確守恆。
         """
         phi_sw = self.phi - self.delta_phi * sat
-        if h is not None:
-            head_ratio = np.clip(max(h - self.h_bed, 0.0) / max(self.h_bed, 1e-12), 0.0, 1.0)
+        if h_free is not None:
+            head_ratio = np.clip(max(float(h_free), 0.0) / max(self.h_bed, 1e-12), 0.0, 1.0)
             phi_sw -= self.delta_phi_pressure * head_ratio
         return max(phi_sw, 1e-3 * self.phi)
 
@@ -1290,7 +1659,8 @@ class V60Params(V60Constant):
         """代表性細粉半徑 [m]。"""
         if np.isfinite(getattr(self, "psd_fine_diameter_mean_m", np.nan)):
             return 0.5 * self.psd_fine_diameter_mean_m
-        return 0.5 * self.D10 * self.fine_radius_ratio
+        # 無 measured PSD 時以 d32 為尺度：number-based D10 是偵測下限 artifact。
+        return 0.5 * self.d32 * self.fine_radius_ratio
 
     def clogging_bin_profiles(self) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """
@@ -1312,9 +1682,16 @@ class V60Params(V60Constant):
         roundness = np.maximum(self.ext_bin_roundness_mean, 0.25)
         shell = np.clip(self.ext_bin_shell_fraction, 0.0, 1.0)
 
-        irregularity = (aspect / roundness) ** 0.35
-        throat_raw = num_w * irregularity * np.minimum(0.45 / d_mm, 2.0)
-        deposition_raw = vol_w * irregularity * np.minimum(0.55 / d_mm, 1.8)
+        # ROUNDNESS ≡ 1/aspect_ratio，故 (aspect/roundness)^0.35 ≡ aspect^0.70。
+        # 0.70 為未獨立標定的形狀指數（形狀越不規則越容易架橋/卡塞）。
+        irregularity = aspect ** 0.70
+        # 飽和堵塞核：d ≪ d_throat 時 → 1，d ≫ d_throat 時 → d_throat/d。
+        # d_throat 由 PSD 自身的 d32 與孔隙率推得（見 `throat_diameter_from_d32`），
+        # 取代舊的 0.45/d、0.55/d magic number。
+        d_throat_mm = self.throat_diameter_from_d32(self.d32 * 1e3)
+        clog_kernel = 1.0 / (1.0 + d_mm / max(d_throat_mm, 1e-12))
+        throat_raw = num_w * irregularity * clog_kernel
+        deposition_raw = vol_w * irregularity * clog_kernel
 
         throat_sum = max(float(np.sum(throat_raw)), 1e-18)
         deposition_sum = max(float(np.sum(deposition_raw)), 1e-18)
@@ -1322,11 +1699,16 @@ class V60Params(V60Constant):
         deposition_w = deposition_raw / deposition_sum
 
         # 小而不規則的顆粒更快卡喉道；以 bin 尺度調整其飽和特徵體積。
-        throat_vchar = self.throat_clog_char_vol * np.clip(self.ext_bin_diameter_mid_m / max(self.D10, 1e-12), 0.25, 3.0)
+        throat_vchar = self.throat_clog_char_vol * np.clip(
+            self.ext_bin_diameter_mid_m / max(self.d32, 1e-12), 0.25, 3.0
+        )
         # 沉積倍率保留體積主導，但仍受細粉與形狀不規則度調制。
-        deposition_mult = np.clip((self.D10 / np.maximum(self.ext_bin_diameter_mid_m, 1e-12)) ** 0.35 * irregularity ** 0.20, 0.5, 2.5)
-        # 外殼比例越低的粗粒，沉積更像骨架回填；給較小附加倍率。
-        deposition_mult *= np.clip(0.6 + 0.4 * (1.0 - shell + 0.25), 0.5, 1.4)
+        deposition_mult = (self.d32 / np.maximum(self.ext_bin_diameter_mid_m, 1e-12)) ** 0.35 * irregularity ** 0.20
+        # 殼層可及比例越低的粗粒，沉積更像骨架回填而非孔隙填塞，附加倍率較小。
+        # 原式 0.6 + 0.4·(1 − shell + 0.25) 化簡（shell ∈ [0,1] → 倍率 ∈ [0.7, 1.1]）。
+        deposition_mult = deposition_mult * (1.1 - 0.4 * shell)
+        if not np.all(np.isfinite(deposition_mult)) or np.any(deposition_mult <= 0.0):
+            raise ValueError("clogging deposition multiplier 必須為有限正值；請檢查 PSD bins")
         return throat_w, deposition_w, throat_vchar, deposition_mult
 
     def k_beta_components(self, V_out: float) -> tuple[float, float]:
@@ -1364,88 +1746,45 @@ class V60Params(V60Constant):
         deposition_term = 1.0 + beta_dep * deposition_factor * V
         return throat_term, deposition_term
 
-    def noyes_whitney_area(self, slow: bool = False, use_reference: bool = False) -> float:
+    def psd_clog_index(self) -> float:
         """
-        顯式 Noyes-Whitney 介面面積 A_eff [m²]。
+        由 measured PSD 導出的無因次堵塞指數。
 
-        What: A_eff = a_s * V_solid * f_shell
-              a_s     : PSD/形狀加權後的比表面積 [1/m]
-              V_solid : 粉床固體體積
-              f_shell : 200 μm 外層殼層可及比例
+        What: `0.65 · throat_clog_index + 0.35 · deposition_clog_index`。
+        Why:  兩個分量共用同一個飽和堵塞核 1/(1 + d/d_throat)，差別只在權重：
+              throat 用 number fraction（喉道卡塞是事件計數），deposition 用
+              volume fraction（沉積回填是體積累積）。0.65/0.35 為未獨立標定的
+              分配權重；因為 prior 最終以 `CLOG_INDEX_REF` 正規化，只有不同 PSD
+              之間的相對排序會進入模型。
+              刻意不使用 `psd_fines_num_*`：number-based fines fraction 直接受
+              影像偵測下限鉗制（低倍率掃描會系統性少算），是量測 artifact。
         """
-        if slow:
-            a_s = self.ref_surface_area_slow_spec if use_reference else self.surface_area_slow_spec
-            f_shell = 1.0
-        else:
-            a_s_raw = self.ref_surface_area_fast_spec if use_reference else self.surface_area_fast_spec
-            shell_frac = self.ref_shell_fraction_abs if use_reference else self.shell_fraction_abs
-            # `surface_area_fast_spec` 已經在 bins 整合時包含 shell-accessibility 權重；
-            # 這裡改回「每單位可及殼層體積的界面密度」，避免和 M_fast_0 的 shell penalty 重複。
-            a_s = a_s_raw / max(shell_frac, 1e-12)
-            f_shell = 1.0
-        V_solid = (1.0 - self.phi) * self.V_bed
-        return a_s * V_solid * f_shell
-
-    def noyes_whitney_length(self, slow: bool = False, use_reference: bool = False) -> float:
-        """
-        顯式 Noyes-Whitney 擴散路徑長度 L_eff [m]。
-
-        Why: Fast 受外層殼層控制；Slow 需穿透更深核心，因此路徑較長。
-        """
-        if slow:
-            path = self.ref_diffusion_path_slow_m if use_reference else self.diffusion_path_slow_m
-            if self.psd_bins_csv_path:
-                fast_path = self.ref_diffusion_path_fast_m if use_reference else self.diffusion_path_fast_m
-                # measured-bin 下，`diffusion_path_slow_m` 代表 deeper-core 的體積加權平均；
-                # 直接拿來當 0D `L_eff` 會偏向最深核心，對 reduced-order 模型過重。
-                # 幾何平均保留「比 fast 更深」，但不把整個 slow pool 視為都來自最深處。
-                path = np.sqrt(max(path * fast_path, 1e-18))
-            return max(self.shell_thickness, path)
-        path = self.ref_diffusion_path_fast_m if use_reference else self.diffusion_path_fast_m
-        return max(0.25 * self.shell_thickness, path)
+        throat = getattr(self, "psd_throat_clog_index", np.nan)
+        deposition = getattr(self, "psd_deposition_clog_index", np.nan)
+        if not (np.isfinite(throat) and np.isfinite(deposition)):
+            return float("nan")
+        return float(0.65 * throat + 0.35 * deposition)
 
     def k_beta_prior_from_psd(self) -> float:
         """
-        由細粉比例與分布寬度推導 k_beta 的 soft prior。
+        由 measured PSD 導出 `k_beta` 的 soft prior 中心值 [m⁻³]。
 
         What:
-            以 `<0.40 mm` fines 的 number / volume blend 當作堵塞指數，
-            再用 PSD span 做小幅修正，回傳供 regularization 使用的中心值。
+            `prior = KBETA_PRIOR_REF · (clog_index / CLOG_INDEX_REF)`。
 
         Why:
-            後段堵塞主要由細粉決定，但仍不能把 `k_beta` 直接寫死；
-            這裡只提供可量測資訊導出的 soft prior。
+            舊實作的 prior 正比於 `self.k_beta` 本身、再 clip 到 `k_beta` 的
+            0.45–2.8 倍，等於「以待估參數為自己的先驗中心」——這是循環的，
+            對 regularization 沒有任何約束力。改為錨在一個絕對 reference：
+            `KBETA_PRIOR_REF` 是 canonical fit 的 `k_beta`，`CLOG_INDEX_REF`
+            是同一份 PSD 的 clog_index，兩者一起定義「這個堵塞指數對應多大的
+            k_beta」。換 PSD 時 prior 隨 clog_index 線性移動，與 `k_beta` 無關。
+            指數取 1.0（線性）：目前沒有支持任何非線性的 identifiability 證據。
         """
-        fines_num = getattr(self, "psd_fines_num_lt_0p40", np.nan)
-        fines_vol = getattr(self, "psd_fines_vol_lt_0p40", np.nan)
-        fines_num_ref = getattr(self, "ref_psd_fines_num_lt_0p40", np.nan)
-        fines_vol_ref = getattr(self, "ref_psd_fines_vol_lt_0p40", np.nan)
-        throat = getattr(self, "psd_throat_clog_index", np.nan)
-        deposition = getattr(self, "psd_deposition_clog_index", np.nan)
-        throat_ref = getattr(self, "ref_psd_throat_clog_index", np.nan)
-        deposition_ref = getattr(self, "ref_psd_deposition_clog_index", np.nan)
-        span = getattr(self, "psd_span_num", np.nan)
-
-        if not np.isfinite(fines_num) or not np.isfinite(fines_vol):
+        clog_index = self.psd_clog_index()
+        if not np.isfinite(clog_index) or clog_index <= 0.0:
             return float(self.k_beta)
-
-        fines_index = 0.7 * fines_num + 0.3 * fines_vol
-        if np.isfinite(fines_num_ref) and np.isfinite(fines_vol_ref):
-            fines_ref = max(0.7 * fines_num_ref + 0.3 * fines_vol_ref, 1e-4)
-        else:
-            fines_ref = max(fines_index, 1e-4)
-        if np.isfinite(throat) and np.isfinite(deposition) and np.isfinite(throat_ref) and np.isfinite(deposition_ref):
-            clog_index = 0.65 * throat + 0.35 * deposition
-            clog_ref = max(0.65 * throat_ref + 0.35 * deposition_ref, 1e-4)
-        else:
-            clog_index = fines_index
-            clog_ref = fines_ref
-        span_ref = 1.55
-        clog_scale = (clog_index / clog_ref) ** 1.20
-        fines_scale = (fines_index / fines_ref) ** 0.45
-        span_scale = (max(span, 0.25) / span_ref) ** 0.35 if np.isfinite(span) else 1.0
-        prior = self.k_beta * clog_scale * fines_scale * span_scale
-        return float(np.clip(prior, 0.45 * self.k_beta, 2.8 * self.k_beta))
+        return float(KBETA_PRIOR_REF * (clog_index / CLOG_INDEX_REF))
 
     def post_bloom_gate(self, t_sec: float, bloom_end_s: float | None) -> float:
         """
@@ -1463,7 +1802,7 @@ class V60Params(V60Constant):
         self,
         q_in: float,
         u_pore: float,
-        h: float,
+        h_free: float,
         t_sec: float,
         bloom_end_s: float | None,
     ) -> float:
@@ -1482,13 +1821,14 @@ class V60Params(V60Constant):
         if gate <= 1e-6:
             return 1.0
 
-        h_drive = max(h, 0.0)
+        h_drive = max(float(h_free), 0.0)
         u_pos = max(float(np.nan_to_num(u_pore, nan=0.0, posinf=0.0, neginf=0.0)), 0.0)
         q_pos = max(float(np.nan_to_num(q_in, nan=0.0, posinf=0.0, neginf=0.0)), 0.0)
 
         S_u = u_pos / (u_pos + self.wetbed_rev_u_half)
-        # bloom 後床層已浸濕，重排不必等自由水柱高於粉層才會發生；
-        # 因此這裡用總水頭 h，而不是只用 h_free。
+        # 可逆壓實由床頂的額外壓差驅動，因此用自由水柱 h_free。
+        # 舊版用總水位 h（含 h_bed）當代理量，在 h_free = 0 時仍給出 S_h ≈ 0.84，
+        # 等於宣稱「沒有任何超壓時床層仍被壓實」——這只是把常數阻力藏進可逆項。
         S_h = h_drive / (h_drive + self.wetbed_rev_h_half)
         f_rev = 1.0 / (1.0 + self.wetbed_rev_gain * S_u * S_h)
 
@@ -1527,7 +1867,18 @@ class V60Params(V60Constant):
         Why:
             單一路徑 Darcy 只能給出單一時間尺度，容易把每次脈衝注水過度平滑化。
             這個狀態就是把「快響應」獨立出來，而不是再往 `k_eff` 疊乘子。
+
+        非作用態 gate（F6d）：
+            What: `pref_flow_coeff <= 0` 時直接回傳 0，ξ_pref 停在初值不演化。
+            Why:  coeff = 0 時 `q_preferential` 恆為 0，ξ_pref 對任何物理量都沒有作用；
+                  但只要 `pref_flow_open_rate > 0`，它仍在每一注有快速暫態，並參與
+                  RK45 的誤差估計 → 改變步長序列 → 改變水力解的離散誤差。
+                  F6c §3.2 實測：同一組物理參數只因 open_rate 0 ↔ 0.254 就讓 canonical
+                  χ² 差 8.05（rtol 1e-6），fit 與 benchmark reload 因此不可比。
+                  沒有物理作用的狀態不該影響求解器，這裡讓「惰性」在數值上也成立。
         """
+        if float(self.pref_flow_coeff) <= 0.0:
+            return 0.0
         gate = self.post_bloom_gate(t_sec, bloom_end_s)
         if gate <= 1e-6:
             return 0.0
@@ -1542,7 +1893,7 @@ class V60Params(V60Constant):
 
     def q_preferential(
         self,
-        h,
+        h_free,
         pref_state,
         T_K=None,
         t_sec: float = 0.0,
@@ -1562,7 +1913,7 @@ class V60Params(V60Constant):
         """
         coeff = max(float(self.pref_flow_coeff), 0.0)
         if coeff <= 0.0:
-            base = np.asarray(h, dtype=float)
+            base = np.asarray(h_free, dtype=float)
             zeros = np.zeros_like(base, dtype=float)
             return float(zeros) if np.ndim(zeros) == 0 else zeros
 
@@ -1577,7 +1928,7 @@ class V60Params(V60Constant):
         if T_K is None:
             T_K = self.T_brew
         mu_scale = self.mu / self.mu_water(T_K)
-        h_eff = self.bed_drive_head(h, T_K=T_K, t_sec=t_sec, sat=sat)
+        h_eff = self.bed_drive_head(h_free, T_K=T_K, t_sec=t_sec, sat=sat)
         q_pref = coeff * gate * wet_gate * kr_sat * xi_arr * h_eff * mu_scale
         q_pref = np.maximum(q_pref, 0.0)
         return float(q_pref) if np.ndim(q_pref) == 0 else q_pref
@@ -1608,7 +1959,7 @@ class V60Params(V60Constant):
         self,
         V_out,
         sat: float = 1.0,
-        h: float | None = None,
+        h_free: float | None = None,
         q_in: float = 0.0,
         u_pore: float = 0.0,
         t_sec: float = 0.0,
@@ -1648,9 +1999,9 @@ class V60Params(V60Constant):
         throat_term, deposition_term = self.k_beta_components(V_out)
         throat_relief = self.throat_relief_factor(pour_impact, t_sec, bloom_end_s)
         throat_eff = 1.0 + (throat_term - 1.0) * throat_relief
-        phi_sw = self.phi_effective(sat, h)
+        phi_sw = self.phi_effective(sat, h_free)
         kc = (phi_sw / self.phi)**3 * ((1.0 - self.phi) / (1.0 - phi_sw))**2
-        f_post = self.wetbed_postbloom_factor(q_in, u_pore, h or 0.0, t_sec, bloom_end_s)
+        f_post = self.wetbed_postbloom_factor(q_in, u_pore, h_free or 0.0, t_sec, bloom_end_s)
         # f_post ∈ [0.2, 1.0]（已被 wetbed_postbloom_factor 內部 clip）。
         # 將乘性 `× f_post` 等價轉為加性 `(1/f_post − 1)`：在 baseline (f_post=1) 時為 0，
         # 與 throat / deposition 的 `(term − 1)` 同構。
@@ -1691,66 +2042,74 @@ class V60Params(V60Constant):
         mu_rel_ref = np.exp(np.polyval(self.mu_fit_log_coeffs, T_ref_C))
         return self.mu * mu_rel / max(mu_rel_ref, 1e-12)
 
-    def k_ext_T(self, T_K: float) -> float:
+    def solute_diffusivity(self, T_K, slow: bool = False):
         """
-        DEPRECATED 2026-05-02：legacy 單一 pool Arrhenius 萃取速率縮放。
+        自由水中的溶質擴散係數 D_x(T) [m²/s]（Stokes-Einstein）。
 
-        主 ODE 改用 `k_ext_fast_T` / `k_ext_slow_T`（雙 pool + bin-resolved），此
-        method 已不在主萃取計算中被呼叫。保留僅為相容舊 `fit_two_stage` 流程。
-        新程式碼請使用 fast/slow 版本。
+        What: `D = k_B·T / (6π·μ(T)·r_x)`，r_x 為 `constant.py` 的
+              `SOLUTE_RADIUS_FAST_M` / `SOLUTE_RADIUS_SLOW_M`。
+        Why:  這是**整個萃取閉合唯一的溫度相依來源**（除了 C_sat 的平衡上限）。
+              舊實作把溫度數了三次：固定 mobility 的 `D = ν_p·k_B·T`（隱含
+              D ∝ T 且與黏度無關）、外掛的 `exp(Ea/R(1/T_ref − 1/T))`、
+              以及 diffusion 乘子內部再出現一次 D。三者方向不一致
+              （真實 D ∝ T/μ(T)，92 → 75 °C 下降 34%；`ν_p k_B T` 只下降 5%），
+              且 `Ea_fast/Ea_slow` 在單一 TDS 觀測下不可辨識（AUD-3）。
+              Stokes-Einstein 沒有任何可調參數，溫度相依完全由 `mu_water(T)` 決定。
         """
-        return self.k_ext_coef * np.exp(
-            self.Ea_ext / R_GAS * (1.0 / self.T_ref - 1.0 / T_K)
-        )
+        radius = SOLUTE_RADIUS_SLOW_M if slow else SOLUTE_RADIUS_FAST_M
+        return K_B * np.asarray(T_K, dtype=float) / (6.0 * np.pi * self.mu_water(T_K) * radius)
 
-    def diffusion_coeff(self, T_K: float, slow: bool = False) -> float:
+    def effective_diffusivity(self, T_K, slow: bool = False):
         """
-        Einstein-Smoluchowski 擴散係數：D = ν_p k_B T
+        顆粒內有效擴散係數 D_eff = D(T) / τ_tort [m²/s]。
+
+        Why: `tau_tort` 是本閉合唯一的 live closure 參數，代表細胞壁與孔隙
+             曲折造成的阻力。它有物理下界 1（不可能快過自由水擴散）。
         """
-        mobility = self.nu_p_slow if slow else self.nu_p_fast
-        return mobility * K_B * T_K
+        return self.solute_diffusivity(T_K, slow=slow) / max(float(self.tau_tort), 1.0)
 
-    def internal_diffusion_factor(self, t_sec: float, T_K: float, slow: bool = False) -> float:
+    def lambda_fast_bins(self, T_K) -> np.ndarray:
         """
-        顆粒內部擴散近似：c(r,t) ~ exp(-r² / 4Dt)
+        fast pool 的 bin-resolved 一階釋放速率 λ_fast,i [1/s]。
 
-        What: 以 PSD 加權後的有效殘餘核心半徑作為擴散距離，
-              將粒內 diffusion 對可及速率的抑制作為 0–1 乘子。
+        What: `λ_fast,i = π² · D_eff,fast(T) / (2δ_i)²`，δ_i = 破壁殼層厚度。
+              這是**內面封閉殼層**（sealed-face slab）的首特徵值：殼層外側對
+              孔隙液開放、內側被未破壁核心封住，等效擴散半長度是 2δ 而非 δ。
+        Why:  Crank 球形擴散解的首項給出 `M(t)/M_∞ = 1 − (6/π²)Σ n⁻² e^(−n²π²Dt/a²)`，
+              長時間由 n = 1 主導，退化成一階釋放 `dM/dt = −λ·M`；λ 的分母是
+              「擴散路徑的等效半長度平方」。舊實作用的 `exp(−L²/4Dt)` 乘子漸近
+              方向**完全相反**：t → ∞ 時它 → 1（速率遞增），而 Crank 的通量是
+              遞減的（AUD-3）。這正是 `nw_eta_slow = 118` 這種補償因子的來源。
 
-        Why: 0D 模型無法直接解球坐標 PDE，但仍需要把「核心溶質傳得較慢」
-             這件事折進速率方程。
-
-        2026-05-01 P0 修正：原 `path_eff = ref_path · sqrt(path/ref_path)` 把
-            指數內 path 從二次降到一次，缺乏物理依據；對粗 bin 的 diffusion 阻力
-            嚴重低估（subagent 萃取審計指出粗 bin 應有完整 path² 懲罰）。
-            改回 Fickian: `diff = exp(-path² / 4Dt)`。
-            為避免 reduced-order 0D 模型對 slow 在 t→0 時瞬時壓成零，
-            改以 `t_eff = max(t_sec, t_floor)` 的方式處理 — t_floor 從 0.5 s
-            提高到 5 s（典型 first-pour 滴流時間量級），讓 slow 在 first-drip
-            就有合理的擴散時間積累。
+              尺度約定（2026-09-24 由主控者裁決改採）：fast pool 是厚度 δ 的殼層，
+              一面開放、一面 zero-flux，其首特徵值為 `π²D/(2δ)²`。
+              **已棄用**先前的「整球約定」`π²D/δ²`——它隱含殼層兩面都對外開放，
+              與 `slow` 池共用同一顆核心的幾何自相矛盾。兩個約定相差 4×，
+              而這個 O(1) 因子與 `tau_tort` 完全簡併：換約定後同一物理狀態
+              報出的 `tau_tort` 會除以 4（F3 的 25.5 → 6.4），因此
+              `EXTRACTION_FIT_SPEC` 的 prior 中心 5.0（文獻曲折度 2–10）
+              現在才與模型同一個尺度。
         """
-        t_eff = max(t_sec, 5.0)
-        D_eff = max(self.diffusion_coeff(T_K, slow=slow), 1e-18)
-        path = self.diffusion_path_slow_m if slow else self.diffusion_path_fast_m
-        return float(np.exp(-(path ** 2) / max(4.0 * D_eff * t_eff, 1e-18)))
+        D_eff = self.effective_diffusivity(T_K, slow=False)
+        delta = np.maximum(self.ext_bin_shell_depth_m, 1e-12)
+        return np.pi ** 2 * D_eff / (2.0 * delta) ** 2
 
-    def internal_diffusion_factor_path(self, t_sec: float, T_K: float, path_m: float, ref_path_m: float, slow: bool = False) -> float:
+    def lambda_slow_bins(self, T_K) -> np.ndarray:
         """
-        指定路徑長度版本的粒內 diffusion 乘子。
+        slow pool 的 bin-resolved 一階釋放速率 λ_slow,i [1/s]。
 
-        What: 與 `internal_diffusion_factor()` 相同，但路徑由各 PSD bin 顯式提供。
-        Why:  measured PSD 要真正進 bin-resolved ODE，就必須讓每個 bin 有自己的 diffusion path。
-
-        2026-05-01 P0 修正：刪除 `sqrt(path_ratio)` 壓縮，回到 Fickian
-            `diff = exp(-path² / 4Dt)`。`ref_path_m` 參數保留為 API 相容性
-            但不再被使用。
+        What: `λ_slow,i = π² · D_eff,slow(T) / R_core,i²`，R_core = R_i − δ_i。
+        Why:  slow pool 就是「未破壁核心」這顆球，Crank 首項的特徵值是
+              `π²D/a²`（a = 球半徑）。因此 λ_slow,i ∝ 1/R_core,i²——
+              粗顆粒慢、細顆粒快，bin 之間的相對次序由幾何唯一決定，
+              不像舊的 `exp(−L²/4Dt)` 會在不同 t 把次序翻過來（AUD-3）。
         """
-        t_eff = max(t_sec, 5.0)
-        D_eff = max(self.diffusion_coeff(T_K, slow=slow), 1e-18)
-        return float(np.exp(-(path_m ** 2) / max(4.0 * D_eff * t_eff, 1e-18)))
+        D_eff = self.effective_diffusivity(T_K, slow=True)
+        core = np.maximum(self.ext_bin_core_radius_eff_m, 1e-12)
+        return np.pi ** 2 * D_eff / core ** 2
 
     # ── 修正 [1][9] 達西萃取（C∞ 平滑過渡 + 毛細管壓門檻） ──────────────────
-    def q_extract(self, h, k_val=None, T_K=None, t_sec: float = 0.0, sat=None):
+    def q_extract(self, h_free, k_val=None, T_K=None, t_sec: float = 0.0, sat=None):
         """
         壓力頭收支版達西萃取流量 [m³/s]。
 
@@ -1795,7 +2154,7 @@ class V60Params(V60Constant):
         if T_K is None:
             T_K = self.T_brew
         phi_T = self.phi_darcy * (self.mu / self.mu_water(T_K))
-        h_eff = self.bed_drive_head(h, T_K=T_K, t_sec=t_sec, sat=sat)
+        h_eff = self.bed_drive_head(h_free, T_K=T_K, t_sec=t_sec, sat=sat)
         kr_sat = 1.0 if sat is None else self.relative_permeability(sat)
         return kr_sat * phi_T * k_val * self.h_bed * h_eff
 
@@ -1808,47 +2167,6 @@ class V60Params(V60Constant):
         """
         return self.C_sat * (1.0 + self.alpha_C_sat * (T_K - self.T_ref))
 
-    # ── 修正 [7] 多組分萃取方法 ───────────────────────────────────────────────
-    def k_ext_fast_T(self, T_K: float, t_sec: float = 0.0) -> float:
-        """
-        Fast 組分顯式 Noyes-Whitney 速率：k = η * A_eff * D / L_eff
-
-        Why: 將原本等效的 k_ext 改寫成顯式 A·D/L 形式：
-             - A_eff 來自 PSD/形狀/外層殼層
-             - D 來自 Einstein-Smoluchowski
-             - L_eff 代表外層殼層到核心的平均擴散距離
-             另外保留 Arrhenius 與粒內 diffusion 因子，作為咖啡細胞壁阻力修正。
-        """
-        return float(np.sum(self.ext_bin_fast_mass_fraction * self.k_ext_fast_bins_T(T_K, t_sec=t_sec)))
-
-    def k_ext_slow_T(self, T_K: float, t_sec: float = 0.0) -> float:
-        """Slow 組分顯式 Noyes-Whitney 速率：k = η * A_eff * D / L_eff"""
-        return float(np.sum(self.ext_bin_slow_mass_fraction * self.k_ext_slow_bins_T(T_K, t_sec=t_sec)))
-
-    def k_ext_fast_bins_T(self, T_K: float, t_sec: float = 0.0) -> np.ndarray:
-        """
-        Fast 組分的 bin-resolved Noyes-Whitney 速率陣列。
-        """
-        D_eff = self.diffusion_coeff(T_K, slow=False)
-        arr = np.exp(self.Ea_fast / R_GAS * (1.0 / self.T_ref - 1.0 / T_K))
-        diff_factor = np.array([
-            self.internal_diffusion_factor_path(t_sec, T_K, path, self.ref_diffusion_path_fast_m, slow=False)
-            for path in self.ext_bin_path_fast_m
-        ])
-        return self.nw_eta_fast * self.ext_bin_area_fast_m2 * D_eff / np.maximum(self.ext_bin_path_fast_m, 1e-18) * arr * diff_factor
-
-    def k_ext_slow_bins_T(self, T_K: float, t_sec: float = 0.0) -> np.ndarray:
-        """
-        Slow 組分的 bin-resolved Noyes-Whitney 速率陣列。
-        """
-        D_eff = self.diffusion_coeff(T_K, slow=True)
-        arr = np.exp(self.Ea_slow / R_GAS * (1.0 / self.T_ref - 1.0 / T_K))
-        diff_factor = np.array([
-            self.internal_diffusion_factor_path(t_sec, T_K, path, self.ref_diffusion_path_slow_m, slow=True)
-            for path in self.ext_bin_path_slow_m
-        ])
-        return self.nw_eta_slow * self.ext_bin_area_slow_m2 * D_eff / np.maximum(self.ext_bin_path_slow_m, 1e-18) * arr * diff_factor
-
     def C_sat_fast_T(self, T_K: float) -> float:
         """Fast 組分溫度相依平衡濃度"""
         return self.C_sat_fast * (1.0 + self.alpha_C_fast * (T_K - self.T_ref))
@@ -1858,7 +2176,7 @@ class V60Params(V60Constant):
         return self.C_sat_slow * (1.0 + self.alpha_C_slow * (T_K - self.T_ref))
 
     # ── 修正 [2][9] 旁路（消散型 + V 衰減 + μ(T) + 毛細管門檻） ──────────────
-    def q_bypass(self, h, psi_val=None, T_K=None):
+    def q_bypass(self, h_free, psi_val=None, T_K=None):
         """
         帶消散係數的旁路流量 [m³/s]，含溫度修正與毛細管壓門檻。
 
@@ -1879,16 +2197,16 @@ class V60Params(V60Constant):
         if T_K is None:
             T_K = self.T_brew
         # 毛細管壓門檻（與 q_extract 一致的 sigmoid 截止，寬度 0.25）
-        cap_factor = 1.0 / (1.0 + np.exp(-(h - self.h_cap) / (self.h_cap * 0.25)))
-        h_free = np.maximum(h - self.h_bed, 0.0)
-        activation = 1.0 / (1.0 + np.exp(-(h_free - self.bypass_onset_head) / self.bypass_onset_width))
-        shape = np.minimum(h_free / max(0.5 * self.h_bed, 1e-12), 1.0)
+        h_free_arr = np.maximum(np.asarray(h_free, dtype=float), 0.0)
+        cap_factor = 1.0 / (1.0 + np.exp(-(h_free_arr - self.h_cap) / (self.h_cap * 0.25)))
+        activation = 1.0 / (1.0 + np.exp(-(h_free_arr - self.bypass_onset_head) / self.bypass_onset_width))
+        shape = np.minimum(h_free_arr / max(0.5 * self.h_bed, 1e-12), 1.0)
         mu_scale = self.mu / self.mu_water(T_K)
-        return psi_val * h_free * shape * activation * mu_scale * cap_factor
+        return psi_val * h_free_arr * shape * activation * mu_scale * cap_factor
 
     def q_total(
         self,
-        h,
+        h_free,
         k_val=None,
         psi_val=None,
         T_K=None,
@@ -1897,43 +2215,43 @@ class V60Params(V60Constant):
         pref_state: float = 0.0,
         bloom_end_s: float | None = None,
     ):
-        """總出水流量 [m³/s]"""
-        q_bulk = self.q_extract(h, k_val, T_K, t_sec, sat=sat)
-        q_pref = self.q_preferential(h, pref_state, T_K=T_K, t_sec=t_sec, sat=sat, bloom_end_s=bloom_end_s)
-        return q_bulk + q_pref + self.q_bypass(h, psi_val, T_K)
+        """總出水流量 [m³/s]（`h_free` = 粉床頂部以上自由水柱高度）"""
+        q_bulk = self.q_extract(h_free, k_val, T_K, t_sec, sat=sat)
+        q_pref = self.q_preferential(h_free, pref_state, T_K=T_K, t_sec=t_sec, sat=sat, bloom_end_s=bloom_end_s)
+        return q_bulk + q_pref + self.q_bypass(h_free, psi_val, T_K)
 
     # ── k–M 聯動：研磨度工廠方法 ───────────────────────────────────────────
     @classmethod
     def for_grind(cls, k_target: float, base: "V60Params | None" = None) -> "V60Params":
         """
-        以研磨度 k 為軸，聯動調整 max_EY 與 k_ext_coef。
+        以研磨度 k 為軸，聯動調整 max_EY（legacy 便利工廠）。
 
         What: 返回以 k_target 為滲透率的新 V60Params：
-              max_EY(k)     = max_EY_ref     × (k_ref / k)^alpha_EY
-              k_ext_coef(k) = k_ext_coef_ref × (k_ref / k)^alpha_ext
+              max_EY(k) = max_EY_ref × (k_ref / k)^alpha_EY
 
         Why（物理耦合）:
-              k ∝ d²（Kozeny-Carman）—— k 是粒徑的流體代理變數。
-              磨細（k↓）同步帶來：
-                1. 更多細胞壁破裂 → max_EY↑（可及溶質增加）
-                2. 擴散路徑縮短  → k_ext↑（萃取速率加快）
-              三者解耦時無法預測最佳研磨點；聯動後可掃描 k-EY 曲線找極值。
+              k ∝ d²（Kozeny-Carman）—— k 是粒徑的流體代理變數；
+              磨細（k↓）造成更多細胞壁破裂 → 可及溶質總量 max_EY↑。
+
+        F3（2026-09-24）：移除同時縮放 `k_ext_coef` 的那一行（該欄位已不存在）。
+              萃取**速率**現在完全由 measured PSD 的幾何（δ_i、R_core,i）決定，
+              而 PSD 的研磨度平移入口是 `psd_diameter_scale`（F1）——
+              有 measured PSD 時請改用它，本方法只適用於沒有 PSD 的粗略掃描。
 
         Args:
             k_target : 目標滲透率 [m²]，代表研磨粗細
             base     : 參考基底（None → 使用預設中研磨參數）
 
         Returns:
-            新的 V60Params，k / max_EY / k_ext_coef 均已按聯動公式修正。
+            新的 V60Params，k 與 max_EY 已按聯動公式修正。
         """
         if base is None:
             base = cls()
         ratio = base.k_ref / k_target
         return dataclasses.replace(
             base,
-            k          = k_target,
-            max_EY     = base.max_EY     * (ratio ** base.alpha_EY),
-            k_ext_coef = base.k_ext_coef * (ratio ** base.alpha_ext),
+            k      = k_target,
+            max_EY = base.max_EY * (ratio ** base.alpha_EY),
         )
 
     @classmethod
@@ -1950,7 +2268,7 @@ class V60Params(V60Constant):
               若提供 k_target，則額外套用 k-M 聯動（for_grind）。
 
         Why:  烘焙度與研磨度是正交的兩個自由度：
-              - for_roast() 設定烘焙度的「基準面」（max_EY_ref, k_ext_ref...）
+              - for_roast() 設定烘焙度的「基準面」（max_EY、C_sat_slow、吸水率…）
               - for_grind() 在該基準面上沿研磨度軸縮放
               兩者可單獨使用，或串聯使用。
 
@@ -1971,9 +2289,6 @@ class V60Params(V60Constant):
             base,
             max_EY            = profile.max_EY,
             alpha_EY          = profile.alpha_EY,
-            k_ext_coef        = base.k_ext_coef * profile.k_ext_factor,
-            Ea_slow           = profile.Ea_slow,
-            fast_fraction     = profile.fast_fraction,
             C_sat_slow        = profile.C_sat_slow,
             T_brew            = profile.brew_temp_K,
             absorb_dry_ratio  = profile.absorb_dry_ratio,

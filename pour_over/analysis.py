@@ -60,17 +60,17 @@ def sensitivity_analysis(
     base = V60Params()
 
     # 待分析的參數：(顯示名, 欄位名, 基準值, 是否用對數微擾)
-    # NOTE 2026-05-02：`k_ext_coef` 已 deprecated（主 ODE 改用 `k_ext_fast/slow_coef`），
-    # 換成 `k_ext_slow_coef` 作 sensitivity axis（fast pool 通常 100% 耗盡，sensitivity
-    # 集中在 slow pool 的速率）。`k_ext_coef` 對 EY/TDS 已無作用，繼續放會誤導 tornado plot。
+    # NOTE 2026-09-24（F3）：萃取端重寫後，`k_ext_*_coef` / `fast_fraction` / `Ea_slow`
+    # 都已不存在。萃取速率軸換成唯一的 live closure 參數 `tau_tort`（顆粒內曲折度），
+    # 幾何軸換成 `shell_thickness`（破壁層厚度，同時決定兩池質量分配與擴散長度）。
     param_specs = [
         ("k  (permeability)",        "k",                 base.k,                 True),
         ("ψ  (bypass coef)",         "psi",               base.psi,               True),
-        ("k_ext_slow  (slow rate)",  "k_ext_slow_coef",   base.k_ext_slow_coef,   True),
+        ("τ_tort  (tortuosity)",     "tau_tort",          base.tau_tort,          True),
         ("max_EY",                   "max_EY",            base.max_EY,            False),
         ("T_brew  [K]",              "T_brew",            base.T_brew,            False),
-        ("fast_fraction",            "fast_fraction",     base.fast_fraction,     False),
-        ("Ea_slow  [J/mol]",     "Ea_slow",       base.Ea_slow,       False),
+        ("shell_thickness  [m]",     "shell_thickness",   base.shell_thickness,   True),
+        ("C_sat_slow  [g/L]",        "C_sat_slow",        base.C_sat_slow,        False),
     ]
 
     # ── 輔助：從模擬結果提取 4 個純量指標 ────────────────────────────────────
@@ -246,7 +246,7 @@ def compare_grind_linkage(protocol: PourProtocol | None = None) -> dict:
 
     What:
       對 8 個研磨點（5e-11 → 5e-12 m²）分別跑：
-        A. 傳統模型（僅改 k，max_EY / k_ext_coef 固定）
+        A. 傳統模型（僅改 k，max_EY 固定）
         B. 聯動模型（V60Params.for_grind，三者同步縮放）
       繪製四格對比圖：EY / TDS / Drain Time / Fast%，並標記 SCA 標準帶。
 
@@ -280,7 +280,7 @@ def compare_grind_linkage(protocol: PourProtocol | None = None) -> dict:
         p_indep = dataclasses.replace(base, k=k_v)
         r_indep = simulate_brew(p_indep, protocol, t_end=180, n_eval=1200)
 
-        # B. 聯動模型：k + max_EY + k_ext_coef 同步
+        # B. 聯動模型：k + max_EY 同步（F3 後 k_ext_coef 已移除）
         p_link  = V60Params.for_grind(k_v, base)
         r_link  = simulate_brew(p_link, protocol, t_end=180, n_eval=1200)
 
@@ -459,7 +459,6 @@ def find_optimal_grind(
     print(f"  最優 k         : {k_opt:.3e} m²")
     print(f"  等效粒徑比     : {d_rel:.2f} × 中研磨粒徑")
     print(f"  max_EY（聯動） : {params_opt.max_EY:.3f}  ({params_opt.max_EY*100:.1f}%)")
-    print(f"  k_ext（聯動）  : {params_opt.k_ext_coef:.2e}")
     print(f"  ────────────────────────────────────────────────")
     print(f"  EY（入壺）     : {ey_opt:.2f}%")
     print(f"  TDS            : {tds_opt:.2f} g/L")

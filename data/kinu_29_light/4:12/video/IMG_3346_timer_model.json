@@ -1,0 +1,26 @@
+{
+ "video_id": "IMG_3346",
+ "timer_model": {
+  "b": 1.0188503448476673,
+  "a": -3.5970000000059787,
+  "a_range": [
+   -3.6050000000059814,
+   -3.589000000005976
+  ],
+  "n_obs": 127,
+  "n_agree": 127,
+  "mismatches": [],
+  "timer_zero_video_t": 3.5304498037381356
+ },
+ "ratefit": {
+  "P": 0.9814984163837274,
+  "P_se": 4.982762303286262e-05,
+  "rate": 1.0188503448476673,
+  "t0": 0.5897901541860642,
+  "n_in": 56,
+  "n_ev": 57,
+  "span_s": 133.5,
+  "rms": 0.014216525218796369
+ },
+ "convention": "scale_timer_s = a + b*video_t_s; video_t_s(f_k) = k - 0.533 s (30 fps) or measured-frame interpolation (29.97 fps); real time t = video_t_s - timer_zero_video_t"
+}
