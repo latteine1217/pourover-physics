@@ -1,0 +1,26 @@
+{
+ "video_id": "IMG_3405",
+ "timer_model": {
+  "b": 1.0181339163931709,
+  "a": -6.689500000004269,
+  "a_range": [
+   -6.6920000000042705,
+   -6.687000000004269
+  ],
+  "n_obs": 120,
+  "n_agree": 120,
+  "mismatches": [],
+  "timer_zero_video_t": 6.570353754349342
+ },
+ "ratefit": {
+  "P": 0.9821890656020852,
+  "P_se": 3.7738628635299195e-05,
+  "rate": 1.0181339163931709,
+  "t0": 0.6844706099832688,
+  "n_in": 78,
+  "n_ev": 79,
+  "span_s": 124.75796666666668,
+  "rms": 0.012268300738719425
+ },
+ "convention": "scale_timer_s = a + b*video_t_s; video_t_s(f_k) = k - 0.533 s (30 fps) or measured-frame interpolation (29.97 fps); real time t = video_t_s - timer_zero_video_t"
+}

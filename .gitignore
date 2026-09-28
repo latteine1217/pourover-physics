@@ -18,11 +18,32 @@ build/
 !v60_thermal.png
 !v60_multi_ode_coupling.png
 
+# Calibrated fit artifacts（F6，2026-09-24）：
+# 這三類圖是 README / index.html 直接引用的 calibrated 展示產物，
+# 與 summary CSV 同屬「一次校準的完整紀錄」，必須跟著版控，否則
+# 文件會指向本機才有的檔案（AGENTS.md §7「不得繼續展示舊 baseline」）。
+# 其餘 data/ 下的一次性掃描圖仍被 `*.png` 忽略。
+!data/**/*_flow_fit.png
+!data/**/*_flow_fit_residuals.png
+!data/**/*_flow_fit_retention.png
+# F10：影片熱時序診斷圖（同一次 calibrated fit 的產物）
+!data/**/*_thermal_video_check.png
+
 # 本地量測媒體
 # 保留 raw CSV 與 model-ready PSD CSV；忽略大型照片與 PDF 來源媒體。
 data/kinu_29_light/*.jpg
 data/kinu_29_light/*.jpeg
 data/kinu_29_light/*.pdf
+# 各 case 目錄的手寫紀錄表掃描（1–18 MB）；數值已轉錄進該 case 的 raw CSV（Class A）
+data/**/*.jpg
+data/**/*.jpeg
+data/**/*.pdf
+
+# 沖煮錄影原檔（F10，2026-09-27）：放在各 case 目錄（data/<case>/IMG_*.MOV），
+# 單檔 136–167 MB，不進版控。可追溯的逐格判讀與衍生量放在 data/<case>/video/
+# （小型文字檔，進版控）；重現步驟見 tools/video/README.md。
+*.MOV
+*.mov
 
 # Editor
 .DS_Store

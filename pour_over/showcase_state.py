@@ -11,16 +11,33 @@ Why:
 """
 
 import csv
+import dataclasses
 from dataclasses import replace
 from pathlib import Path
 
-from .measured_io import load_flow_profile_csv
-from .params import PourProtocol, V60Params
+from .measured_io import _measured_setup_overrides, load_flow_profile_csv
+from .params import PourProtocol, RoastProfile, V60Params
+from .preprocess import preprocess_flow_profile
 
 
 def data_dir() -> Path:
     """回傳專案內 data 目錄。"""
     return Path(__file__).resolve().parents[1] / "data"
+
+
+def canonical_case_dir() -> Path:
+    """
+    展示基準 case 的目錄（F10，2026-09-27 起 kinu29 4:12）。
+
+    Why: 必須與 `fitting.DEFAULT_MEASURED_FLOW_CSV` 同一個 case（此處不 import fitting，
+         以免 fitting → viz → showcase_state → fitting 成環；`tests` 釘住兩者一致）。
+         4:12 有沖煮錄影，flow profile 由 loader 自動改讀影片版（見
+         `measured_io.resolve_flow_profile_path`）。
+    """
+    return data_dir() / "kinu_29_light" / "4:12"
+
+
+CANONICAL_FLOW_CSV_NAME = "kinu29_light_20g_flow_profile.csv"
 
 
 def latest_protocol(protocol: PourProtocol | None = None) -> PourProtocol:
@@ -35,10 +52,14 @@ def latest_protocol(protocol: PourProtocol | None = None) -> PourProtocol:
     """
     if protocol is not None:
         return protocol
-    flow_csv = data_dir() / "kinu29_light_20g_flow_profile.csv"
+    # F10：改用 canonical case 的量測（影片版優先）；舊版讀頂層 legacy 副本
+    # `data/kinu29_light_20g_flow_profile.csv`（= kinu29 4:11 紀錄表）。
+    flow_csv = canonical_case_dir() / CANONICAL_FLOW_CSV_NAME
     if flow_csv.exists():
-        obs = load_flow_profile_csv(flow_csv)
-        return PourProtocol.from_cumulative_profile(list(zip(obs["t_s"], obs["v_in_ml"])))
+        # F9：與 fitting 同一份量測預處理（注水率上限重建），否則展示用的注水協議
+        # 與校準當下的協議不同，calibrated 參數就不是這條注水曲線的解。
+        obs = preprocess_flow_profile(load_flow_profile_csv(flow_csv))
+        return PourProtocol.from_cumulative_profile(obs["pour_knots"])
     return PourProtocol.standard_v60()
 
 
@@ -47,60 +68,138 @@ def latest_calibrated_params() -> V60Params:
     回傳目前專案展示用的 calibrated baseline。
 
     What:
-        由 calibrated summary 載入目前首頁使用的主模型參數；
-        若本地存在 measured PSD bins，則一併接入主模型。
+        以 canonical case（F10 起 kinu29 4:12）的量測 meta 建立 roast-aware 基底
+        （`RoastProfile` → `max_EY` 等凍結 prior），套上 measured PSD bins 與
+        量測硬體設定，再從 calibrated summary 讀回 fit 出來的 closure 參數。
 
     Why:
         compare_*、README 與首頁必須引用同一組展示基準，避免各自硬編碼。
-        repo 目前不保證隨附 measured PSD 檔，因此展示基準必須在缺 bins 時
-        仍能安全退回 calibrated D10-only baseline。
+        與 `benchmark._load_measured_benchmark_state` 同一套回讀規則
+        （F6，2026-09-24）：舊版只讀 `k / k_beta / λ_liquid_dripper / max_EY /
+        k_ext_*`，在 F2b/F3/F4 之後會讓首頁靜默退回熱端與潤濕的預設值，
+        且 `max_EY_fit` / `k_ext_*_fit` 早已不是模型欄位（AGENTS.md §2.4、§7）。
+
+        回讀白名單刻意只含「這次 fit 真的動過的參數」：
+        `k`、`k_beta`、`tau_lag`（由呼叫端使用）、`pref_flow_*`、
+        `U_liquid_dripper_W_m2K`、`lambda_server_ambient`、`tau_wet_s`、
+        `sat_rel_perm_exp`（F6b 起為 live 參數），
+        以及 `extraction_fit_param_names/values` 表驅動的萃取參數（目前 `tau_tort`）。
+        **不讀** `max_EY_fit` / `k_ext_*_fit` / `lambda_liquid_dripper_fit`
+        （凍結 prior 或 DEPRECATED 欄位）。
     """
-    bins_csv = data_dir() / "kinu29_psd_bins.csv"
-    # Option C canonical baseline (2026-05-02)：showcase 應與 fit_measured_benchmark
-    # 用同一份 summary（DEFAULT_MEASURED_FLOW_FIT_SUMMARY 路徑），不再讀已 stale 的
-    # worktree 頂層 CSV。AGENTS.md §11「展示基準應優先從最新 calibrated artifact 讀取」。
-    summary_csv = data_dir() / "kinu_29_light" / "4:11" / "kinu29_light_20g_flow_fit_psd_clog_impactrelief_wetbedchi_180s_summary.csv"
-    if bins_csv.exists():
-        summary = {}
-        if summary_csv.exists():
-            with summary_csv.open("r", encoding="utf-8", newline="") as f:
-                summary = next(csv.DictReader(f))
-        # Option C canonical fit 同時涵蓋水力 (k, k_beta)、熱端 (λ_liquid_dripper,
-        # λ_server_ambient) 與擴萃 (max_EY, k_ext_slow/fast_coef)。
-        # 若 showcase 只接 k/k_beta，會在 thermal/extraction 圖上靜默退回 default
-        # → 與 README/EXPERIMENT_LOG 公佈的 canonical state 不一致。
-        # Defaults 取自 V60Params field defaults，保留缺欄位時的安全退回。
-        defaults = V60Params()
-        return V60Params(
-            psd_bins_csv_path=str(bins_csv),
-            D10_measured_m=374.2e-6,
-            h_bed=0.053,
-            T_amb=23.0 + 273.15,
-            k=float(summary.get("k_fit", 8.122875712025124e-11)),
-            k_beta=float(summary.get("k_beta_fit", 1291.7562166952491)),
-            wetbed_impact_tau=2.0,
-            throat_relief_gain=0.58,
-            pref_flow_coeff=float(summary.get("pref_flow_coeff_fit", 0.0)),
-            pref_flow_open_rate=float(summary.get("pref_flow_open_rate_fixed", summary.get("pref_flow_open_rate_fit", 0.0))),
-            pref_flow_tau_decay=float(summary.get("pref_flow_tau_decay_fixed", summary.get("pref_flow_tau_decay_fit", 5.0))),
-            lambda_liquid_dripper=float(summary.get("lambda_liquid_dripper_fit", defaults.lambda_liquid_dripper)),
-            lambda_server_ambient=float(summary.get("server_cooling_lambda_fit", defaults.lambda_server_ambient)),
-            max_EY=float(summary.get("max_EY_fit", defaults.max_EY)),
-            k_ext_slow_coef=float(summary.get("k_ext_slow_coef_fit", defaults.k_ext_slow_coef)),
-            k_ext_fast_coef=float(summary.get("k_ext_fast_coef_fit", defaults.k_ext_fast_coef)),
+    # canonical case 的 PSD 與 calibrated summary 必須來自同一個資料夾：
+    # 2026-05 移除 CANONICAL_HIGH_RES_PSD_OVERRIDES 後，canonical baseline 走
+    # per-case sibling PSD（27.4 μm/px），頂層 `kinu29_psd_bins.csv` 僅作 fallback
+    # （58 μm/px 的 legacy 低倍率掃描）。
+    case_dir = canonical_case_dir()
+    flow_csv = case_dir / CANONICAL_FLOW_CSV_NAME
+    bins_csv = case_dir / "kinu29_psd_bins.csv"
+    if not bins_csv.exists():
+        bins_csv = data_dir() / "kinu29_psd_bins.csv"
+    summary_csv = case_dir / "kinu29_light_20g_flow_fit_summary.csv"
+    if not bins_csv.exists():
+        return V60Params()
+
+    summary: dict = {}
+    if summary_csv.exists():
+        with summary_csv.open("r", encoding="utf-8", newline="") as f:
+            summary = next(csv.DictReader(f))
+
+    # ── roast-aware 基底：與 benchmark / fitting 同一條路徑 ─────────────────
+    roast_map = {
+        "light": RoastProfile.LIGHT,
+        "medium": RoastProfile.MEDIUM,
+        "dark": RoastProfile.DARK,
+    }
+    base = V60Params()
+    overrides: dict = {"psd_bins_csv_path": str(bins_csv)}
+    if flow_csv.exists():
+        meta = load_flow_profile_csv(flow_csv)["meta"]
+        profile = roast_map.get(str(meta.get("roast", "")).strip().lower())
+        if profile is not None:
+            base = V60Params.for_roast(profile)
+        overrides.update(_measured_setup_overrides(meta, flow_csv_path=flow_csv))
+        overrides.update(
+            dose_g=float(meta["dose_g"]),
+            h_bed=float(meta["bed_height_cm"]) / 100.0,
+            T_brew=float(meta["brew_temp_C"]) + 273.15,
         )
-    return V60Params()
+    else:
+        # 缺量測 CSV 時退回 §11 的展示基準（20 g / 5.3 cm / 23 degC）。
+        overrides.update(h_bed=0.053, T_amb=23.0 + 273.15)
+
+    valid_fields = {f.name for f in dataclasses.fields(base)}
+
+    def _num(key: str):
+        raw = summary.get(key)
+        if raw is None or str(raw).strip() == "":
+            return None
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            return None
+
+    def _set(field: str, key: str, *, positive: bool = False) -> None:
+        val = _num(key)
+        if val is None or field not in valid_fields:
+            return
+        if positive and not val > 0.0:
+            return
+        overrides[field] = float(val)
+
+    _set("k", "k_fit", positive=True)
+    _set("k_beta", "k_beta_fit")
+    _set("pref_flow_coeff", "pref_flow_coeff_fit")
+    for field, keys in (
+        # F6e：與 benchmark 一致，優先讀 `*_fit`（模型實際狀態）；`*_fixed` 只是 stage 4 搜尋設定值。
+        ("pref_flow_open_rate", ("pref_flow_open_rate_fit", "pref_flow_open_rate_fixed")),
+        ("pref_flow_tau_decay", ("pref_flow_tau_decay_fit", "pref_flow_tau_decay_fixed")),
+    ):
+        for key in keys:
+            if _num(key) is not None:
+                _set(field, key)
+                break
+    _set("U_liquid_dripper_W_m2K", "U_liquid_dripper_fit", positive=True)
+    _set("lambda_server_ambient", "server_cooling_lambda_fit")
+    _set("tau_wet_s", "tau_wet_s_fit", positive=True)
+    # F6b：`sat_rel_perm_exp` 自 F6b 起是 stage 1/2 的 live 參數，展示狀態必須
+    # 跟著回讀，否則 showcase 會用 params 預設 3.0 去畫一張與 calibrated summary
+    # 不同的模型（正是 F4 §9.1 標記過的那種漂移）。
+    _set("sat_rel_perm_exp", "sat_rel_perm_exp_fit", positive=True)
+
+    # 萃取端：表驅動欄位（F4 §3），F3 改表後自動跟上。
+    names = str(summary.get("extraction_fit_param_names", "") or "").strip()
+    values = str(summary.get("extraction_fit_param_values", "") or "").strip()
+    if names and values:
+        for name, raw in zip(names.split(";"), values.split(";")):
+            name, raw = name.strip(), raw.strip()
+            if not name or not raw or name not in valid_fields:
+                continue
+            try:
+                overrides[name] = float(raw)
+            except ValueError:
+                continue
+
+    return replace(base, **overrides)
 
 
 def scaled_grind_params(scale: float) -> V60Params:
     """
     用同一份 measured PSD 做等比縮放，生成 coarse / medium / fine。
+
+    What: 以顯式 `psd_diameter_scale` 平移整條 measured PSD，並讓 `k` 依
+          Kozeny-Carman 的 d² 關係同步縮放（尺度錨點為 Sauter d32）。
+    Why:  舊實作透過覆寫 `D10_measured_m` 間接驅動縮放，把 resolution-bounded
+          的 number-based D10 當成研磨度旋鈕；現在縮放倍率是直接輸入，
+          而 d32 由縮放後的 PSD 自然得出。
     """
     base = latest_calibrated_params()
-    native_d10 = max(float(base.D10), 1e-9)
-    scaled_d10 = native_d10 * max(float(scale), 1e-9)
-    scaled_k = float(base.k) * max(float(scale), 1e-9) ** 2
-    trial = replace(base, D10_measured_m=scaled_d10, k=scaled_k)
+    ratio = max(float(scale), 1e-9)
+    trial = replace(
+        base,
+        psd_diameter_scale=float(base.psd_diameter_scale) * ratio,
+        k=float(base.k) * ratio ** 2,
+    )
     base_prior = max(float(base.k_beta_prior_from_psd()), 1e-9)
     trial_prior = max(float(trial.k_beta_prior_from_psd()), 1e-9)
     scaled_k_beta = float(base.k_beta) * trial_prior / base_prior

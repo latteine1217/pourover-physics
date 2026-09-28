@@ -277,9 +277,10 @@ canvas{display:block;width:100%;height:auto}
       <div class="header-tag">Technical Reference · Physics Simulation</div>
       <h1>V60 Pour-Over<br>Physics Engine</h1>
       <p class="header-sub">
-        The current best model is calibrated against a real Kinu 29 brew with measured PSD,
-        split throat/deposition clogging, and bin-resolved extraction. The page now distinguishes
-        calibrated fit diagnostics from broader regime sweeps.
+        The model is calibrated against a measured Kinu 29 brew with measured PSD,
+        split throat/deposition clogging, and bin-resolved extraction. The page distinguishes
+        calibration residuals from broader regime sweeps, and states where a quantity is
+        not measured at all.
       </p>
       <div class="header-meta">
         <span class="chip chip-c">Darcy / Kozeny-Carman</span>
@@ -312,26 +313,57 @@ canvas{display:block;width:100%;height:auto}
       </div>
     </div>
     <div class="hero-summary">
-      <div class="hero-kicker">Current Best Fit</div>
-      <div class="hero-lead">Kinu 29, light roast, 20 g, measured PSD, calibrated against real V_in(t) / V_out(t).</div>
-      <div class="hero-note">This is the current reference model: measured D10, split clogging, bin-resolved extraction, and a two-node thermal model with ceramic dripper heat capacity.</div>
+      <div class="hero-kicker">Calibration Reference · Canonical Benchmark PASS · kinu27 Whiteness FAIL · kinu29/4:11 (No Video) FAIL</div>
+      <div class="hero-lead">Kinu 29, light roast, 20 g, measured PSD, calibrated against video-derived V_in(t) / V_out(t) and the same brew's server-temperature series.</div>
+      <div class="hero-note">These are <strong>calibration residuals</strong> on the brew the parameters were fitted to, not prediction accuracy. The canonical case is <code>kinu29/4:12</code>, a brew with a pour-over video. Refitting against the video liquid level instead of the hand-logged drained-volume column (which ran 13–73 mL high after the bloom) dropped reduced χ² from 20.15 to 0.63 with no equation changed. The 2026-09-27/28 follow-up — server-temperature series in χ², one shared liquid-level stop operator, readings after the dripper is lifted excluded, whiteness tested on r/σ, and two fitting-procedure bugs fixed — brings the canonical to reduced χ² 0.36 and a benchmark PASS; <code>kinu28/4:20</code> also passes, <code>kinu27/4:12</code> fails residual whiteness only (lag-1 0.503 vs 0.5), and <code>kinu29/4:11</code> (no video, log record) still fails reduced χ² (8.37) and whiteness. A PASS does not mean the residual is white: unweighted lag-1 is still 0.56, the model outflow still leads the measured level by about +7 mL right after the bloom's first pour, and <code>tau_wet</code> sits 0.65 s above its lower bound with a one-sided CI. See <code>README.md</code> → Refit disclosure.</div>
       <div class="hero-grid">
         <div class="hero-cell">
-          <div class="hero-label">Measured D10</div>
-          <div class="hero-value">374 μm</div>
+          <div class="hero-label">Reduced χ²</div>
+          <div class="hero-value">0.36</div>
         </div>
         <div class="hero-cell">
-          <div class="hero-label">V RMSE</div>
-          <div class="hero-value">14.5 mL</div>
+          <div class="hero-label">V RMSE (diagnostic)</div>
+          <div class="hero-value">2.57 mL</div>
         </div>
         <div class="hero-cell">
-          <div class="hero-label">q RMSE</div>
-          <div class="hero-value">1.26 mL/s</div>
+          <div class="hero-label">Retention RMSE</div>
+          <div class="hero-value">2.60 mL</div>
         </div>
         <div class="hero-cell">
-          <div class="hero-label">Cup ΔT</div>
-          <div class="hero-value">+3.24°C</div>
+          <div class="hero-label">Server T(t) RMSE</div>
+          <div class="hero-value">0.92 °C</div>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ MODEL REVISION 2026-09 ═══════════════════════════════════ -->
+  <div class="section">
+    <div class="section-label">Model Revision 2026-09</div>
+    <div class="panel section-panel">
+      <div class="story-copy">
+        <div class="eyebrow">What Changed And Why</div>
+        <div class="showcase-title" style="font-size:30px">Three structural corrections and one rewritten objective function.</div>
+        <div class="showcase-text">A September 2026 audit re-derived the model's own balances from the calibrated state and found that three of them did not close. The closures below were rewritten rather than patched with compensating multipliers, and the model was then fit against the new objective on four measured cases. That refit still failed the benchmark gate hard — reduced χ² 8.48–29.30 and Durbin-Watson 0.115–0.256, in phase with the pour rhythm across all four cases. On 2026-09-27, three of the four cases turned out to have a pour-over video: frame-by-frame readout showed the hand-logged drained-volume column ran 13–73 mL high after the bloom. Refitting against the video liquid level — no equation, closure, or live parameter changed — dropped reduced χ² to 0.63 / 0.57 / 0.31 and pulled `k` / `tau_wet` off their bounds. A 2026-09-27/28 follow-up added the video server-temperature series to χ², aligned the stop-time operator on both sides, excluded readings after the dripper is lifted, and fixed two fitting-procedure bugs (the final-cup reading and the hydraulic-stage objective); after a full refit the canonical and <code>kinu28/4:20</code> pass every gate, <code>kinu27/4:12</code> fails residual whiteness only, and <code>kinu29/4:11</code> (no video) still fails reduced χ² (8.37) and whiteness. No model equation changed in either step. See `README.md` → Video-derived measurements and Refit disclosure for the full list of caveats before quoting a number from this page.</div>
+        <div class="showcase-list">
+          <div class="showcase-item">
+            <strong>Water inventory</strong>
+            Absorption was tracked in two places that disagreed by 15.5 mL, and a level clamp created water out of nothing. Free water, mobile pore water, immobile pore water, and absorbed water are now four explicit states, each drawn down at most at its own content over a transfer time, so `V_poured = V_out + V_abs + V_imm + V_mob + V_free` holds by construction. Measured retained mass forces this split: a freshly wetted bed drains below the pore volume, yet the same bed holds more than pore plus absorption capacity at the end, so retention has to be a time-resolved quantity.
+          </div>
+          <div class="showcase-item">
+            <strong>Thermal enthalpy</strong>
+            The liquid-node balance dropped a term far larger than the ones it kept, and the enthalpy of the absorbed water — about a tenth of the energy input — entered nowhere. The node now carries `V_th = V_mob + V_imm + V_free + V_abs + V_equiv_coffee`, the inlet uses the full poured flow, and the liquid-dripper exchange is `U · A_wet(h)` with `U` bounded by a wet-paper-plus-ceramic series estimate. The previous lumped rate constant implied a `U` above that bound.
+          </div>
+          <div class="showcase-item">
+            <strong>Extraction closure</strong>
+            The internal-diffusion factor rose towards unity with time, i.e. the release rate accelerated as the grain emptied, and it suppressed most of the slow-pool mass; a large compensating coefficient existed only to undo it. The slow pool is now the first term of Crank's spherical-diffusion series, `λ_slow,i = π²D(T)/R_core,i²`; the fast pool takes the same first-eigenvalue structure over a sealed-inner-face shell, `λ_fast,i = π²D(T)/(2δ_i)²`, replacing the earlier Noyes-Whitney `A·D/δ` framing; and `D(T)` alone carries the temperature dependence for both. The pool split comes from measured shell accessibility per PSD bin, so the accessible solute mass is `dose · max_EY` identically and `max_EY` is frozen at its roast prior instead of being fitted.
+          </div>
+          <div class="showcase-item">
+            <strong>Objective function</strong>
+            The loss added five quantities with five different units, of which only two had any weight in practice, and one term was a smoothness penalty on the volume residual rather than an independent observation. It is now `Σ (residual/σ)²` over volume, stop time, extracted mass, and either the video server-temperature series or the single cup temperature, with stated σ values and log-space priors; retained mass is a gate, not a χ² term, because it is algebraically `poured − drained`. The hydraulic stages minimize only the hydraulic part of χ², so hydraulic parameters cannot absorb thermal error. That makes reduced χ², Durbin-Watson, and lag-1 autocorrelation (on r/σ) readable — and the unweighted residual is still correlated, not noise.
+          </div>
+        </div>
+        <div class="mini-note">Full audit: <code>docs/audit_2026-09-24.md</code>. Change record and pre-refit diagnostics: <code>docs/experiment_log.md</code>, entries <code>EXP-20260924-AUDIT-PHASE2</code>, <code>EXP-20260927-VIDEO-MEASUREMENT</code>, and <code>EXP-20260928-F12c-FIT-BUGS-AND-REFIT</code> (with the F11 / F12a / F12b entries before it).</div>
       </div>
     </div>
   </div>
@@ -362,9 +394,9 @@ canvas{display:block;width:100%;height:auto}
         </div>
         <div class="story-figure">
           <div class="canvas-wrap">
-            <img class="figure-img" src="data/kinu_29_light/4:11/kinu29_light_20g_flow_fit_psd_clog_impactrelief_wetbedchi_180s.png" alt="Calibrated Kinu 29 flow fit with wet-bed structure">
+            <img class="figure-img" src="data/kinu_29_light/4:12/kinu29_light_20g_flow_fit.png" alt="Calibrated Kinu 29/4:12 (video-derived) flow-fit panel. Generated locally by `uv run python -m pour_over benchmark`; this triple is version-controlled via a .gitignore whitelist.">
           </div>
-          <div class="figure-note">The lead figure is now the calibrated flow-fit panel: measured poured volume, measured drained volume, interval outflow rate, residuals, and the current hydraulic fit for the Kinu 29 light-roast brew, including the post-bloom wet-bed structure state.</div>
+          <div class="figure-note">The lead figure is the calibrated flow-fit panel: video-derived poured volume, video-derived drained volume, interval outflow rate, and the modelled hydraulic trajectory for the Kinu 29 light-roast brew. PNG outputs are generated, not stored: run <code>uv run python -m pour_over benchmark</code> to produce it.</div>
         </div>
       </div>
     </div>
@@ -578,14 +610,18 @@ canvas{display:block;width:100%;height:auto}
     <div class="panel section-panel">
     <div class="story-grid alt">
       <div class="story-copy">
-        <div class="eq-label">Shrinking-core accessibility (per bin)</div>
+        <div class="eq-label">Slow pool — Crank first-term release (per bin)</div>
         <div class="eq">
-          C_eff,i = C_sat(<span class="sym-a">T</span>) · (<span class="sym-c">M</span><sub>i</sub> / M₀,<sub>i</sub>)<sup>β</sup>,  β = 1.5
+          d<span class="sym-c">M</span><sub>i</sub>/dt = −λ<sub>i</sub> · <span class="sym-c">M</span><sub>i</sub>,
+          λ<sub>i</sub> = π² D(<span class="sym-a">T</span>) / (τ_tort · R<sub>i</sub>²)
+          <br><span class="sym-dim">decaying flux; the previous exp(−L²/4Dt) factor increased with time, the wrong asymptote</span>
         </div>
 
-        <div class="eq-label" style="margin-top:14px">Bin-resolved Noyes-Whitney transport</div>
+        <div class="eq-label" style="margin-top:14px">Fast pool — bin-resolved Noyes-Whitney transport</div>
         <div class="eq eq-b">
-          k_ext,i(<span class="sym-a">T</span>) = η · A_i · D(<span class="sym-a">T</span>) / L_i · exp(−<span class="sym-b">Eₐ</span> / R<span class="sym-a">T</span>)
+          k_ext,i(<span class="sym-a">T</span>) = A_i · D(<span class="sym-a">T</span>) / δ_i,
+          δ_i = min(shell_thickness, R_i)
+          <br><span class="sym-dim">no Arrhenius prefactor: D(T) already carries the full temperature dependence</span>
         </div>
 
         <div class="eq-label" style="margin-top:14px">Bed concentration ODE — bin-resolved CSTR</div>
@@ -600,39 +636,19 @@ canvas{display:block;width:100%;height:auto}
 
         <!-- Activation energy comparison -->
         <div style="margin-top:20px">
-          <div style="font-family:var(--font-mono);font-size:10px;color:var(--text-dim);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:12px">Activation Energy — Roast × Component</div>
-          <div style="font-family:var(--font-mono);font-size:11px;display:flex;flex-direction:column;gap:8px">
-            <div>
-              <div style="display:flex;justify-content:space-between;margin-bottom:3px">
-                <span style="color:var(--accent4)">Fast (Acids / Sweetness)</span>
-                <span style="color:var(--text-dim)">Eₐ = 15 kJ/mol</span>
-              </div>
-              <div class="pbar"><div class="pbar-fill" style="width:25%;background:var(--accent4)"></div></div>
-            </div>
-            <div>
-              <div style="display:flex;justify-content:space-between;margin-bottom:3px">
-                <span style="color:var(--accent)">Slow — Light roast (Eₐ_slow)</span>
-                <span style="color:var(--text-dim)">Eₐ = 50 kJ/mol</span>
-              </div>
-              <div class="pbar"><div class="pbar-fill" style="width:83%;background:var(--accent)"></div></div>
-            </div>
-            <div>
-              <div style="display:flex;justify-content:space-between;margin-bottom:3px">
-                <span style="color:var(--accent)">Slow — Medium roast</span>
-                <span style="color:var(--text-dim)">Eₐ = 45 kJ/mol</span>
-              </div>
-              <div class="pbar"><div class="pbar-fill" style="width:75%;background:var(--accent)"></div></div>
-            </div>
-            <div>
-              <div style="display:flex;justify-content:space-between;margin-bottom:3px">
-                <span style="color:var(--accent2)">Slow — Dark roast</span>
-                <span style="color:var(--text-dim)">Eₐ = 38 kJ/mol</span>
-              </div>
-              <div class="pbar"><div class="pbar-fill" style="width:63%;background:var(--accent2)"></div></div>
-            </div>
+          <div style="font-family:var(--font-mono);font-size:10px;color:var(--text-dim);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:12px">Temperature Dependence — Stokes-Einstein</div>
+          <div class="eq eq-b">
+            D(<span class="sym-a">T</span>) = k_B <span class="sym-a">T</span> / (6π μ(<span class="sym-a">T</span>) r)
+          </div>
+          <div style="font-family:var(--font-mono);font-size:11px;display:flex;flex-direction:column;gap:8px;margin-top:12px">
+            <div style="display:flex;justify-content:space-between"><span style="color:var(--accent4)">Fast solute radius</span><span style="color:var(--text-dim)">0.40 nm</span></div>
+            <div style="display:flex;justify-content:space-between"><span style="color:var(--accent)">Slow solute radius</span><span style="color:var(--text-dim)">1.00 nm</span></div>
+            <div style="display:flex;justify-content:space-between"><span style="color:var(--accent2)">D ratio, 80 → 95 °C</span><span style="color:var(--text-dim)">≈ 1.25×</span></div>
           </div>
           <div style="font-family:var(--font-mono);font-size:9px;color:var(--text-dim);margin-top:10px">
-            Eₐ_slow ≫ Eₐ_fast → higher T amplifies bitter extraction disproportionately
+            The roast-dependent Arrhenius activation energies were removed in the 2026-09 revision:
+            with a fixed-mobility D, an Arrhenius factor and a D inside the diffusion factor,
+            temperature was being counted three times. Both radii are uncalibrated forward inputs.
           </div>
         </div>
       </div>
@@ -642,13 +658,13 @@ canvas{display:block;width:100%;height:auto}
           <div class="chart-head">
             <div>
               <div class="chart-title">Generated Output — Calibrated Fit (Extraction view)</div>
-              <div class="chart-sub">Since the May 2026 dual-baseline restructure, the calibrated extraction view is consolidated into the same canonical fit comparison panel referenced earlier. TDS calibration is now driven by measured Brix data (kinu29/4:11 final cup Brix = 1.36 °Bx → TDS = 11.56 g/L; model fit error +0.02 g/L).</div>
+              <div class="chart-sub">The calibrated extraction view shares the canonical fit comparison panel. TDS is compared as a <strong>mass</strong>, against the measured drained volume as denominator, read at the last fit-valid level reading before the dripper is lifted (kinu29/4:12 final cup Brix = 1.36 °Bx → TDS = 11.56 g/L, σ = 0.72 g/L from the 0.79–0.89 range of the Brix conversion factor). Model error after the 2026-09-28 refit: +0.045 g/L — a stage-7 calibration residual from fitting the single free parameter `tau_tort` (hard-identified on this case) to this one TDS point, far smaller than σ; not a predictive-accuracy claim.</div>
             </div>
           </div>
           <div class="canvas-wrap">
-            <img class="figure-img" src="data/kinu_29_light/4:11/kinu29_light_20g_flow_fit_psd_clog_impactrelief_wetbedchi_180s.png" alt="Canonical Kinu 29/4:11 calibrated fit comparison">
+            <img class="figure-img" src="data/kinu_29_light/4:12/kinu29_light_20g_flow_fit.png" alt="Canonical Kinu 29/4:12 (video-derived) calibrated fit comparison. Generated locally by `uv run python -m pour_over benchmark`; this triple is version-controlled via a .gitignore whitelist.">
           </div>
-          <div class="figure-note">The chemistry-side validation now lives in the canonical fit summary CSV (<code>data/kinu_29_light/4:11/...summary.csv</code>): final TDS predicted vs measured, max_EY, k_ext_slow_coef, and the stage 7 joint Powell residual log. A standalone extraction-quality time-series figure is on the deferred follow-up list.</div>
+          <div class="figure-note">The chemistry-side numbers live in the canonical fit summary CSV (<code>data/kinu_29_light/4:12/..._summary.csv</code>): predicted vs measured extracted mass, the frozen <code>max_EY</code>, the single live closure parameter <code>tau_tort</code> with its conditional CI, and <code>stage7_skipped_reason</code>. Stage 7 only runs when the hydraulic volume error is within 5%.</div>
           <div class="mini-note">Physically, this is the section where internal availability, transport path length, and cup-side dilution stop being abstract symbols and become a cup-strength trajectory.</div>
         </div>
       </div>
@@ -663,19 +679,19 @@ canvas{display:block;width:100%;height:auto}
       <div class="story-copy" style="margin-bottom:16px">
         <div class="eyebrow">Coupled Physics Architecture</div>
         <div class="showcase-title" style="font-size:33px">Hydraulic, thermal, and extraction ODEs share one physical trajectory.</div>
-        <div class="showcase-text">The model is organized around coupled state families, not independent post-hoc fits. Flow controls heat capacity, advection, residence time, and extraction transfer; temperature feeds back through viscosity, capillary wetting, diffusion, and Arrhenius kinetics; measured PSD enters both permeability/clogging and bin-resolved extraction geometry.</div>
+        <div class="showcase-text">The model is organized around coupled state families, not independent post-hoc fits. Flow controls heat capacity, advection, residence time, and extraction transfer; temperature feeds back through viscosity, capillary retention, and the Stokes-Einstein diffusivity; measured PSD enters both permeability/clogging and bin-resolved extraction geometry.</div>
         <div class="tech-grid">
           <div class="tech-card">
             <strong>Hydraulic ODEs</strong>
-            `h`, `V_out`, `V_bed`, `V_liq`, and `sat` evolve through Darcy flow, capillary gates, unsaturated `kr(sat)`, clogging, and channel-flow splitting.
+            `V_free`, `V_mob`, `V_imm`, `V_abs`, `w`, `V_out`, and `V_bed` evolve through Darcy flow, capillary retention, unsaturated `kr(S_mob)`, clogging, and channel-flow splitting. Their sum is a conservation identity, not a checked quantity.
           </div>
           <div class="tech-card">
             <strong>Thermal ODEs</strong>
-            Slurry node `T` and dripper node `T_dripper` exchange energy via inflow advection, liquid-dripper coupling (`λ_liquid_dripper`), and ambient loss (`λ_dripper_ambient`); the cup-side observation layer adds vessel heat capacity and `λ_server_ambient` cooling.
+            Slurry node `T` and dripper node `T_dripper` exchange energy via full-inflow advection, an area-resolved `U · A_wet(h)` coupling, and ambient loss (`λ_dripper_ambient`); the cup-side observation layer adds vessel heat capacity and `λ_server_ambient` cooling. The liquid heat capacity includes the absorbed water. On video cases the server-temperature series (V ≥ 150 mL, probe immersed) enters χ², `U` is fitted and `λ_server_ambient` is frozen at a physical estimate of 3.7e-4 s⁻¹; with only a single cup temperature, `λ_server_ambient` is fitted and `U` stays at 194 W/(m²K).
           </div>
           <div class="tech-card">
             <strong>Extraction ODEs</strong>
-            Fast and slow solute states evolve per PSD bin and axial CSTR layer, with `q_bed`, thermal history, and particle geometry coupled into the transfer rates.
+            Fast and slow solute states evolve per PSD bin and axial CSTR layer. The fast pool is a Noyes-Whitney shell transfer, the slow pool a Crank first-term release; both take their temperature dependence from `D(T)` alone.
           </div>
         </div>
       </div>
@@ -729,7 +745,7 @@ canvas{display:block;width:100%;height:auto}
           <div class="canvas-wrap">
             <img class="figure-img" src="v60_thermal.png" alt="V60 thermal coupling output figure">
           </div>
-          <div class="figure-note">This remains a temperature-sweep reference. The measured Kinu 29 benchmark now includes an explicit server-side natural-convection node, which brings the final cup temperature close to the observed value without re-tuning vessel heat capacity.</div>
+          <div class="figure-note">This remains a temperature-sweep reference. On the measured Kinu 29 benchmark the server node is checked against the video server-temperature series (canonical RMSE 0.92 °C on the in-χ² points, V ≥ 150 mL). Below 150 mL the model runs up to 5–9 °C cold on the canonical (F11 diagnosis), so those points stay out of χ²: the measured effective server heat capacity is only 22–37 mL there, a zero-parameter wetted-wall model was rejected, and the remaining candidate (headspace steam condensing on the dry wall) needs a heat-transfer coefficient that has not been measured.</div>
         </div>
       </div>
     </div>
@@ -746,13 +762,22 @@ canvas{display:block;width:100%;height:auto}
           <div class="chart-head">
             <div>
               <div class="chart-title">Generated Output — Calibrated Fit (Hydraulic view)</div>
-              <div class="chart-sub">The hydraulic diagnostics are also folded into the canonical fit comparison panel, with the same calibrated kinu29/4:11 trajectory: V_out RMSE 5.06% relative, q_out RMSE 1.23 mL/s, drain error +0.09 s, all gates PASS.</div>
+              <div class="chart-sub">The hydraulic diagnostics share the canonical kinu29/4:12 (video-derived) fit panel, now with the residual time series and the retained-mass panel beside it. The acceptance criteria are reduced χ², residual whiteness (Durbin-Watson / lag-1) and the retention gate — relative V_RMSE is a diagnostic only, because its previous model-volume denominator loosened the gate exactly when the model over-predicted.</div>
             </div>
           </div>
           <div class="canvas-wrap">
-            <img class="figure-img" src="data/kinu_29_light/4:11/kinu29_light_20g_flow_fit_psd_clog_impactrelief_wetbedchi_180s.png" alt="Canonical Kinu 29/4:11 calibrated fit comparison (hydraulic view)">
+            <img class="figure-img" src="data/kinu_29_light/4:12/kinu29_light_20g_flow_fit.png" alt="Canonical Kinu 29/4:12 (video-derived) calibrated fit comparison, hydraulic view. Generated locally by `uv run python -m pour_over benchmark`; this triple is version-controlled via a .gitignore whitelist.">
           </div>
-          <div class="figure-note">Standalone hydraulic diagnostics figure (head trajectory, flow decomposition, bypass activation, permeability retention, saturation) is on the deferred follow-up list. The calibrated fit panel above contains the V_out / q_out / residual triplet that drives the hydraulic-side gate decision.</div>
+          <div class="canvas-wrap">
+            <img class="figure-img" src="data/kinu_29_light/4:12/kinu29_light_20g_flow_fit_residuals.png" alt="Volume residual time series with Durbin-Watson and lag-1 annotation. Generated locally by `uv run python -m pour_over benchmark`; this triple is version-controlled via a .gitignore whitelist.">
+          </div>
+          <div class="canvas-wrap">
+            <img class="figure-img" src="data/kinu_29_light/4:12/kinu29_light_20g_flow_fit_retention.png" alt="Modelled versus measured retained mass over the brew. Generated locally by `uv run python -m pour_over benchmark`; this triple is version-controlled via a .gitignore whitelist.">
+          </div>
+          <div class="canvas-wrap">
+            <img class="figure-img" src="data/kinu_29_light/4:12/kinu29_light_20g_thermal_video_check.png" alt="Modelled versus video-derived server and outflow temperature time series (diagnostic, not in the fit loss). Generated locally by `uv run python -m pour_over benchmark`.">
+          </div>
+          <div class="figure-note">Four panels, all regenerated by <code>uv run python -m pour_over benchmark</code>: the fit comparison, the residual time series (Durbin-Watson 1.34 / lag-1 0.326 on r/σ, gate passed; on unweighted mL residuals lag-1 is still 0.56, and the second-pour lead of about +7 mL at 45–50 s is visible), retained mass against <code>poured − drained</code> (a gate, not a χ² term), and the video thermal check (server series in χ² above 150 mL; outflow as an out-of-sample check). <code>tau_wet</code> is identified from the shape of V_out(t) and is only medium-identified on this case: 10.65 s, 0.65 s above its lower bound, CI lower end None.</div>
         </div>
       </div>
 
@@ -785,13 +810,13 @@ canvas{display:block;width:100%;height:auto}
             <span>Parameter</span><span>Default value</span>
           </div>
           <div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--row-div)"><span>k₀</span><span style="color:var(--accent)">6×10⁻¹¹ m²</span></div>
-          <div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--row-div)"><span>β_throat</span><span style="color:var(--accent4)">~1.45×10³</span></div>
-          <div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--row-div)"><span>β_deposition</span><span style="color:var(--accent4)">~1.45×10³</span></div>
+          <div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--row-div)"><span>β_throat</span><span style="color:var(--accent4)">1568</span></div>
+          <div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--row-div)"><span>β_deposition</span><span style="color:var(--accent4)">785.3</span></div>
           <div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--row-div)"><span>h_cap</span><span style="color:var(--accent3)">3 mm</span></div>
           <div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--row-div)"><span>h_bed</span><span style="color:var(--text)">53 mm</span></div>
           <div style="display:flex;justify-content:space-between;padding:4px 0"><span>h_gas₀ (medium)</span><span style="color:var(--accent2)">1 mm</span></div>
         </div>
-        <div class="mini-note">This is the section that explains why fine grind does not just extract more. Once the bed compacts and permeability collapses, the whole brew migrates into a different hydraulic regime.</div>
+        <div class="mini-note">This is the section that explains why fine grind does not just extract more. Once the bed compacts and permeability collapses, the whole brew migrates into a different hydraulic regime. The grind sweep below moves `k` explicitly through the Kozeny-Carman `d²` relation; `throat_clog_index` / `deposition_clog_index` (and therefore `β_throat` / `β_deposition` and `k_beta`'s PSD prior) are ratios of particle size to pore-throat size that are invariant to a uniform `psd_diameter_scale` shift by construction, so read this as "grind changes permeability", not "grind changes clogging severity" — the model does not currently represent the latter.</div>
       </div>
     </div>
     </div>
@@ -816,8 +841,8 @@ canvas{display:block;width:100%;height:auto}
         <div style="font-family:var(--font-mono);font-size:10px;letter-spacing:0.15em;text-transform:uppercase;color:var(--accent4);margin-bottom:12px;font-weight:600">LIGHT</div>
         <div style="font-family:var(--font-mono);font-size:11px;display:flex;flex-direction:column;gap:7px">
           <div style="display:flex;justify-content:space-between"><span style="color:var(--text-dim)">max_EY</span><span style="color:var(--text-hi)">22 %</span></div>
-          <div style="display:flex;justify-content:space-between"><span style="color:var(--text-dim)">Eₐ_slow</span><span style="color:var(--text-hi)">50 kJ/mol</span></div>
-          <div style="display:flex;justify-content:space-between"><span style="color:var(--text-dim)">fast_fraction</span><span style="color:var(--accent4)">0.45</span></div>
+          <div style="display:flex;justify-content:space-between"><span style="color:var(--text-dim)">C_sat_slow</span><span style="color:var(--text-hi)">60 g/L</span></div>
+          <div style="display:flex;justify-content:space-between"><span style="color:var(--text-dim)">alpha_EY</span><span style="color:var(--accent4)">0.10</span></div>
           <div style="display:flex;justify-content:space-between"><span style="color:var(--text-dim)">absorb_full</span><span style="color:var(--text-hi)">1.2 mL/g</span></div>
           <div style="display:flex;justify-content:space-between"><span style="color:var(--text-dim)">h_gas₀</span><span style="color:var(--accent3)">9 mm</span></div>
         </div>
@@ -829,8 +854,8 @@ canvas{display:block;width:100%;height:auto}
         <div style="font-family:var(--font-mono);font-size:10px;letter-spacing:0.15em;text-transform:uppercase;color:var(--accent);margin-bottom:12px;font-weight:600">MEDIUM</div>
         <div style="font-family:var(--font-mono);font-size:11px;display:flex;flex-direction:column;gap:7px">
           <div style="display:flex;justify-content:space-between"><span style="color:var(--text-dim)">max_EY</span><span style="color:var(--text-hi)">30 %</span></div>
-          <div style="display:flex;justify-content:space-between"><span style="color:var(--text-dim)">Eₐ_slow</span><span style="color:var(--text-hi)">45 kJ/mol</span></div>
-          <div style="display:flex;justify-content:space-between"><span style="color:var(--text-dim)">fast_fraction</span><span style="color:var(--accent)">0.35</span></div>
+          <div style="display:flex;justify-content:space-between"><span style="color:var(--text-dim)">C_sat_slow</span><span style="color:var(--text-hi)">80 g/L</span></div>
+          <div style="display:flex;justify-content:space-between"><span style="color:var(--text-dim)">alpha_EY</span><span style="color:var(--accent)">0.15</span></div>
           <div style="display:flex;justify-content:space-between"><span style="color:var(--text-dim)">absorb_full</span><span style="color:var(--text-hi)">1.64 mL/g</span></div>
           <div style="display:flex;justify-content:space-between"><span style="color:var(--text-dim)">h_gas₀</span><span style="color:var(--accent3)">1 mm</span></div>
         </div>
@@ -842,8 +867,8 @@ canvas{display:block;width:100%;height:auto}
         <div style="font-family:var(--font-mono);font-size:10px;letter-spacing:0.15em;text-transform:uppercase;color:var(--accent2);margin-bottom:12px;font-weight:600">DARK</div>
         <div style="font-family:var(--font-mono);font-size:11px;display:flex;flex-direction:column;gap:7px">
           <div style="display:flex;justify-content:space-between"><span style="color:var(--text-dim)">max_EY</span><span style="color:var(--text-hi)">30 %</span></div>
-          <div style="display:flex;justify-content:space-between"><span style="color:var(--text-dim)">Eₐ_slow</span><span style="color:var(--text-hi)">38 kJ/mol</span></div>
-          <div style="display:flex;justify-content:space-between"><span style="color:var(--text-dim)">fast_fraction</span><span style="color:var(--accent2)">0.25</span></div>
+          <div style="display:flex;justify-content:space-between"><span style="color:var(--text-dim)">C_sat_slow</span><span style="color:var(--text-hi)">100 g/L</span></div>
+          <div style="display:flex;justify-content:space-between"><span style="color:var(--text-dim)">alpha_EY</span><span style="color:var(--accent2)">0.20</span></div>
           <div style="display:flex;justify-content:space-between"><span style="color:var(--text-dim)">absorb_full</span><span style="color:var(--text-hi)">1.7 mL/g</span></div>
           <div style="display:flex;justify-content:space-between"><span style="color:var(--text-dim)">h_gas₀</span><span style="color:var(--accent3)">4 mm</span></div>
         </div>
@@ -865,21 +890,21 @@ canvas{display:block;width:100%;height:auto}
           <div class="showcase-list">
             <div class="showcase-item">
               <strong>State Vector</strong>
-              `h, V_out, V_bed, V_poured, sat, {C_fast,i, M_fast,i, C_slow,i, M_slow,i}, T, T_dripper, xi_pref`
+              `V_free, V_mob, V_imm, V_abs, w, V_out, V_bed, V_poured, {C_fast,i, M_fast,i, C_slow,i, M_slow,i}, T, T_dripper, xi_pref`
             </div>
             <div class="showcase-item">
               <strong>Primary Outputs</strong>
-              Brew time, drain time, bypass ratio, permeability retention, TDS, in-cup EY, dissolved EY, measured D10 diagnostics, and fast/slow cup balance.
+              Brew time, cup stop time, bypass ratio, permeability retention, retained mass, TDS, in-cup EY, dissolved EY, water and energy balance residuals, and fast/slow cup balance.
             </div>
             <div class="showcase-item">
               <strong>Physical Closures</strong>
-              Darcy flow, split clogging, capillary cutoff, wet-bed capillary boost, two-node thermal coupling, roast-dependent chemistry, and bin-resolved Noyes-Whitney transport.
+              Darcy flow, split clogging, Young-Laplace bed retention with mobile/immobile pore water, two-node thermal coupling through `U · A_wet(h)`, roast-dependent chemistry, and bin-resolved fast/slow release.
             </div>
           </div>
         </div>
         <div class="story-copy">
           <div class="eq-label">Core State</div>
-          <div class="eq">state = [h, V_out, V_bed, V_poured, sat, {C_fast,i, M_fast,i, C_slow,i, M_slow,i}, T, T_dripper, xi_pref]</div>
+          <div class="eq">state = [V_free, V_mob, V_imm, V_abs, w, V_out, V_bed, V_poured, {C_fast,i, M_fast,i, C_slow,i, M_slow,i}, T, T_dripper, xi_pref]</div>
           <div class="eq-label" style="margin-top:14px">Hydraulic Output Layer</div>
           <div class="eq eq-b">
             Q_ext, Q_bp, k_eff, sat, h, brew_time, drain_time, throat/deposition clog diagnostics
@@ -888,7 +913,7 @@ canvas{display:block;width:100%;height:auto}
           <div class="eq eq-p">
             C_out, TDS, EY_cup, EY_dissolved, EY_fast, EY_slow, cup temperature fit error
           </div>
-          <div class="mini-note">Project scope, installation, and reproducibility are intentionally kept in the README. This page is for surfacing the current best model, the measured calibration, and the regime figures it produces.</div>
+          <div class="mini-note">Project scope, installation, the model boundary, the table of uncalibrated assumptions, and how to read the fit metrics are kept in the README. This page surfaces the model, the calibration case, and the regime figures it produces.</div>
         </div>
       </div>
     </div>

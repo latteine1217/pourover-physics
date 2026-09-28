@@ -25,4 +25,4 @@ dose_g,roast,grinder,grinder_setting,bed_height_cm,brew_temp_C,final_coffee_temp
 20,light,Kinu,29,5.3,92.0,,,23.0,123.5,0.88,0.02,0.004,0.0,01:55,115,302.9,280.0,22.9,pour_5_end,1,final pour end
 20,light,Kinu,29,5.3,92.0,,,23.0,123.5,0.88,0.02,0.004,0.0,02:00,120,302.8,290.0,12.8,drawdown,1,
 20,light,Kinu,29,5.3,92.0,,,23.0,123.5,0.88,0.02,0.004,0.0,02:05,125,302.8,300.0,2.8,drawdown,1,
-20,light,Kinu,29,5.3,92.0,,,23.0,123.5,0.88,0.02,0.004,0.0,02:10,130,302.8,310.0,-7.2,flow_stop_visual,1,visual flow stop
+20,light,Kinu,29,5.3,92.0,,,23.0,123.5,0.88,0.02,0.004,0.0,02:10,130,302.8,310.0,-7.2,flow_stop_visual,0,visual flow stop; EXCLUDED F6b 2026-09-24: drained 310.0 mL > poured 302.8 g -> retained = -7.2 g violates mass conservation (water out cannot exceed water in). The drained column is read in 10 mL steps here; the over-read is proven at this row but its onset cannot be located from this file, so only the row that is provably impossible is excluded. stop_flow_time_s is still taken from this row (independent observation with its own sigma).
