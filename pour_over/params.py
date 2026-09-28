@@ -2518,6 +2518,19 @@ class PourProtocol:
                 rate += vol_ml / dur
         return rate * 1e-6
 
+    def rate_breakpoints(self) -> List[float]:
+        """
+        注水率（與注水起點衝擊 `pour_start_impact`）可能跳動的所有時刻 [s]，升冪、不重複。
+
+        What: `cumulative_profile` 的全部節點；`pours` 的每段起點與終點。
+        Why:  `pour_rate` 是分段常數、衝擊項在注水起點由 0 跳到 1。ODE 積分若跨過這些跳點，
+              自適應步長落在跳點哪一側會隨參數的極小擾動翻轉，χ² 因而帶 ±0.07–0.17 的路徑
+              噪音與 −0.03…−0.06 的截斷偏差（F13-C）。`simulate_brew` 以此在斷點間分段積分。
+        """
+        if self.cumulative_profile:
+            return sorted({float(t) for t, _ in self.cumulative_profile})
+        return sorted({float(x) for start, _, dur in self.pours for x in (start, start + dur)})
+
     def last_pour_end(self) -> float:
         """最後一注結束的時間 [s]"""
         if self.cumulative_profile:

@@ -64,6 +64,41 @@ def _cumtrapz(y, x) -> np.ndarray:
     return np.concatenate(([0.0], np.cumsum(inc)))
 
 
+def _solve_piecewise(rhs, t_end: float, y0, t_eval, breakpoints, **solver_kw):
+    """
+    What: 在 `breakpoints` 切出的每一段上各自呼叫 `solve_ivp`，以段尾狀態接續下一段；
+          回傳 (t, y)，與單次 `solve_ivp(t_eval=t_eval)` 的 `sol.t` / `sol.y` 同形狀。
+    Why:  注水率在斷點處跳動。單段積分跨過跳點時，步長落在跳點哪一側隨參數極小擾動翻轉，
+          χ² 帶 ±0.07–0.17 的路徑噪音；分段後段內 RHS 光滑，噪音降到 ~1e-8，
+          rtol 1e-7 的截斷誤差與單段 rtol 1e-10 相當（F13-C）。
+          段內把 RHS 的 t 夾在 [a, nextafter(b, a)]：RK45 最後一個 stage 落在 t = b，
+          不夾會取到下一段的注水率（`pour_rate` 為右連續）。
+          某段失敗時停止並回傳已完成的部分（與單次 `solve_ivp` 失敗時的行為相同），另發警告。
+    """
+    edges = [0.0, *(b for b in breakpoints if 0.0 < b < t_end), float(t_end)]
+    y = np.asarray(y0, dtype=float)
+    ts, ys = [], []
+    for i, (a, b) in enumerate(zip(edges[:-1], edges[1:])):
+        last = i == len(edges) - 2
+        m = (t_eval >= a) & ((t_eval <= b) if last else (t_eval < b))
+        te = t_eval[m]
+        te_ext = te if (te.size and te[-1] >= b) else np.append(te, b)
+        hi = np.nextafter(b, a)
+        seg = solve_ivp(
+            lambda t, yy, a=a, hi=hi: rhs(min(max(t, a), hi), yy),
+            t_span=(a, b), y0=y, t_eval=te_ext, **solver_kw,
+        )
+        n_keep = min(te.size, seg.t.size)
+        ts.append(seg.t[:n_keep])
+        ys.append(seg.y[:, :n_keep])
+        if not seg.success:
+            warnings.warn(f"ODE 在 [{a:g}, {b:g}] s 段積分失敗（{seg.message}）；結果截斷於 t = {seg.t[-1] if seg.t.size else a:g} s。",
+                          RuntimeWarning, stacklevel=3)
+            break
+        y = seg.y[:, -1]
+    return np.concatenate(ts), np.concatenate(ys, axis=1)
+
+
 def _first_downcrossing(t, y, threshold: float, mask) -> float | None:
     """
     What: 在 `mask` 為真的區間內，找 y 第一次由上往下穿越 threshold 的時刻（線性插補）。
@@ -399,11 +434,13 @@ def simulate_brew(
         np.array([T0, T0, 0.0], dtype=float),
     ))
 
-    sol = solve_ivp(
+    # 在注水率斷點間分段積分（`_solve_piecewise` 的 Why；F13-C）
+    t, Y = _solve_piecewise(
         rhs,
-        t_span=(0, t_end),
-        y0=y0,
-        t_eval=t_eval,
+        t_end,
+        y0,
+        t_eval,
+        protocol.rate_breakpoints(),
         # RK45 + 加密步長（max_step=0.5）
         # 選用理由（2026-09-24 實測：kinu29 4:11 calibrated、k×4.5、n_eval=1200、
         # t_end=180、max_step=0.5，best-of-3）：
@@ -422,15 +459,14 @@ def simulate_brew(
     )
 
     # ── 狀態還原（一律以 ODE 原始狀態為準，不再用展示值回餵物理）────────────
-    t = sol.t
-    V_free = np.maximum(sol.y[0], 0.0)
-    V_mob = np.maximum(sol.y[1], 0.0)
-    V_imm = np.clip(sol.y[2], 0.0, V_pore_max)
-    V_abs = np.clip(sol.y[3], 0.0, V_full)
-    w_wet = np.clip(sol.y[4], 0.0, 1.0)
-    V_out = sol.y[5]
-    V_bed = sol.y[6]
-    V_poured = sol.y[7]
+    V_free = np.maximum(Y[0], 0.0)
+    V_mob = np.maximum(Y[1], 0.0)
+    V_imm = np.clip(Y[2], 0.0, V_pore_max)
+    V_abs = np.clip(Y[3], 0.0, V_full)
+    w_wet = np.clip(Y[4], 0.0, 1.0)
+    V_out = Y[5]
+    V_bed = Y[6]
+    V_poured = Y[7]
     V_pore = V_mob + V_imm
     S_bed = np.clip(V_pore / V_pore_max, 0.0, 1.0)        # 既有介面：床內孔隙總飽和度
     S_mob = params.mobile_saturation(V_mob, V_imm)
@@ -438,10 +474,10 @@ def simulate_brew(
     h_total = params.wetted_height(S_bed, h_free)
     sat = V_abs / V_full                                  # 既有介面：sat = 顆粒吸水飽和度
 
-    C_fast_layers = np.maximum(sol.y[c_fast_slice], 0.0).reshape(n_layers, n_bins, -1)
-    M_fast_layers = np.maximum(sol.y[m_fast_slice], 0.0).reshape(n_layers, n_bins, -1)
-    C_slow_layers = np.maximum(sol.y[c_slow_slice], 0.0).reshape(n_layers, n_bins, -1)
-    M_slow_layers = np.maximum(sol.y[m_slow_slice], 0.0).reshape(n_layers, n_bins, -1)
+    C_fast_layers = np.maximum(Y[c_fast_slice], 0.0).reshape(n_layers, n_bins, -1)
+    M_fast_layers = np.maximum(Y[m_fast_slice], 0.0).reshape(n_layers, n_bins, -1)
+    C_slow_layers = np.maximum(Y[c_slow_slice], 0.0).reshape(n_layers, n_bins, -1)
+    M_slow_layers = np.maximum(Y[m_slow_slice], 0.0).reshape(n_layers, n_bins, -1)
     C_fast_bins_mean = np.tensordot(layer_frac, C_fast_layers, axes=(0, 0))
     C_slow_bins_mean = np.tensordot(layer_frac, C_slow_layers, axes=(0, 0))
     C_fast = np.sum(C_fast_bins_mean, axis=0)
@@ -452,8 +488,8 @@ def simulate_brew(
     C_slow_out = np.sum(C_slow_layers[-1], axis=0)
     C_bed_top = np.sum(C_fast_layers[0] + C_slow_layers[0], axis=0)
     C_bed_bottom = np.sum(C_fast_layers[-1] + C_slow_layers[-1], axis=0)
-    T_raw = sol.y[T_idx]
-    T_dripper_raw = sol.y[T_dripper_idx]
+    T_raw = Y[T_idx]
+    T_dripper_raw = Y[T_dripper_idx]
     T_K = np.clip(T_raw, params.T_amb, params.T_brew + 5.0)
     T_dripper_K = np.clip(T_dripper_raw, params.T_amb - 5.0, params.T_brew + 5.0)
     # clip 診斷：clip 會破壞能量守恆，必須可觀測而不是靜靜吞掉
@@ -467,7 +503,7 @@ def simulate_brew(
             RuntimeWarning,
             stacklevel=2,
         )
-    xi_pref = np.clip(sol.y[pref_idx], 0.0, 1.0)
+    xi_pref = np.clip(Y[pref_idx], 0.0, 1.0)
     M_sol = M_fast + M_slow             # 向後相容：總剩餘固相
 
     # ── 流量分量：逐點呼叫與 rhs 同一個 flow_state，診斷序列因此不可能與 ODE 漂移 ──

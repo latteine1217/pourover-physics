@@ -25,17 +25,20 @@ A physics-based numerical simulation of V60 pour-over coffee brewing, modelling 
 > including thermal terms not yet fitted). After a full refit of the three video
 > cases: `kinu29/4:12` (canonical) and `kinu28/4:20` **PASS** every gate
 > (reduced χ² `0.36 / 0.50`); `kinu27/4:12` fails only residual whiteness
-> (lag-1 `0.503` on `r/σ`, gate `≤ 0.5`); `kinu29/4:11` (no video), refit
-> under the corrected hydraulic objective, still fails reduced χ² (`8.37`) and
+> (lag-1 `0.520` on `r/σ`, gate `≤ 0.5`); `kinu29/4:11` (no video), refit
+> under the corrected hydraulic objective, still fails reduced χ² (`8.38`) and
 > whiteness because its logged `drained` column carries the same read-ahead
 > bias with no video to correct it.
+> **2026-09-28 (F13)**: the ODE is now integrated piecewise between pour-rate
+> breakpoints, which removes `0.07–0.17` of χ² path noise; all four cases were
+> refit and each video case's seven starts now land on the same point. Gate
+> results are unchanged.
 > **A PASS does not mean the residual is white**: on unweighted mL residuals
-> lag-1 is still `0.54–0.56` on all three video cases, and the model's outflow
-> still leads the measured level right after the bloom's first pour
-> (canonical `+6.9 / +6.5 mL` at 45 / 50 s, in a σ = 15 mL segment). See
-> `Refit disclosure` below and `docs/experiment_log.md`
-> (`[BASELINE]`, `EXP-20260928-F12c-FIT-BUGS-AND-REFIT` and the three entries
-> before it). A measurement-preprocessing layer (`Measurement preprocessing`
+> lag-1 is still `0.55–0.57` on all three video cases, and the model's outflow
+> still leads the measured level when the second pour restarts a stopped
+> outflow (canonical `+6.9 / +6.5 mL` at 45 / 50 s, in a σ = 15 mL segment).
+> See `Refit disclosure` below and `docs/experiment_log.md` (`[BASELINE]`,
+> `EXP-20260928-F13-REFIT` and the entries before it). A measurement-preprocessing layer (`Measurement preprocessing`
 > below) and a video-frame measurement layer (`Video-derived measurements`
 > below) both run by default; do not quote a reduced-χ² number without
 > checking which observation set produced it.
@@ -212,7 +215,7 @@ Fixed setup for the canonical case:
 - thermal configuration (video case): `U_liquid_dripper` fitted; `lambda_server_ambient` frozen at `3.7e-4 s⁻¹` (see `Uncalibrated assumptions`)
 
 Calibrated values (canonical case `kinu29/4:12`, full 7-start refit
-2026-09-28 after the F12c bug fixes; summary
+2026-09-28 with the ODE integrated piecewise between pour-rate breakpoints; summary
 `data/kinu_29_light/4:12/kinu29_light_20g_flow_fit_summary.csv`). See
 `Refit disclosure` below for what these numbers do and do not mean. The
 canonical case changed from `kinu29/4:11` (log record) to `kinu29/4:12`
@@ -222,33 +225,33 @@ itself; the observation set also changed on 2026-09-27/28 (server series in
 
 | Quantity | Value | 95% CI (conditional) |
 |---|---|---|
-| `k` | `6.462e-11 m²` | `[6.361e-11, 6.751e-11] m²` (hard) |
-| `sat_rel_perm_exp` | `3.189` | `[2.151, 4.315]` (medium) |
+| `k` | `6.462e-11 m²` | `[6.361e-11, 6.746e-11] m²` (hard) |
+| `sat_rel_perm_exp` | `3.140` | `[2.125, 4.250]` (medium) |
 | `k_beta` | `2515 (frozen = PSD prior)` | `frozen — no CI (Class B)` |
 | `beta_throat` / `beta_deposition` | `1715` / `800.1` | — |
 | `tau_lag` | `0.5 s (frozen)` | `frozen — no CI (Class B)` |
-| `tau_wet_s` | `10.65 s` (lower bound `10 s`) | `[None, 16.57] s` — one-sided; identifiability medium (see Refit disclosure point 5) |
-| `U_liquid_dripper` | `257.6 W/(m²K)` (fitted) | `[184.7, 358.2]` (thermal identifiability medium) |
+| `tau_wet_s` | `10.00 s` (**at** the lower bound `10 s`) | `[None, 16.32] s` — one-sided; identifiability medium (see Refit disclosure point 5) |
+| `U_liquid_dripper` | `258.2 W/(m²K)` (fitted) | `[184.0, 362.4]` (thermal identifiability medium) |
 | `lambda_server_ambient` | `3.7e-4 s⁻¹` (frozen, Class D estimate) | `frozen — no CI` (weak) |
-| `tau_tort` | `7.523` | hard local identifiability (span 1.27 local / 5.08 wide) |
+| `tau_tort` | `7.465` | hard local identifiability (span 1.31 local / 5.36 wide) |
 
 | Fit quality | Value |
 |---|---|
-| `χ²` / `χ²_data` / `χ²_hydraulic` | `9.97` / `9.32` / `4.31` |
-| χ² terms | volume `4.28`, server series `5.02` (6 points), stop `0.008`, extracted mass `0.004`; cup temperature not scored (series present) |
+| `χ²` / `χ²_data` / `χ²_hydraulic` | `9.94` / `9.30` / `4.25` |
+| χ² terms | volume `4.24`, server series `5.03` (6 points), stop `0.01`, extracted mass `0.02`; cup temperature not scored (series present) |
 | `reduced χ²` (`dof` / `N_obs`) | `0.358` (`26` / `31`) |
-| Durbin-Watson / lag-1 on `r/σ` (gate) | `1.34` / `0.326` |
-| σ ≤ 6 mL subset / unweighted mL (reported, not gated) | `1.05 / 0.140` (n 16) / `0.88 / 0.561` |
+| Durbin-Watson / lag-1 on `r/σ` (gate) | `1.34` / `0.327` |
+| σ ≤ 6 mL subset / unweighted mL (reported, not gated) | `1.06 / 0.141` (n 16) / `0.87 / 0.563` |
 | `V_out` RMSE (diagnostic) | `2.57 mL` |
-| retention RMSE | `2.60 mL` |
-| retention, model / observed | `53.5 mL` / `52.9 mL` (t = 125 s, last reading before the dripper is lifted) |
-| cup stop error | `+0.22 s` (shared liquid-level operator; observed stop `120.9 s`) |
-| server temperature series (in χ²) | RMSE `0.92 °C`, bias `+0.02 °C` (6 points, `V ≥ 150 mL`) |
-| outflow temperature, out-of-sample | RMSE `2.26 °C`, bias `-0.11 °C` (13 points) |
-| cup temperature error (diagnostic) | `-0.43 °C` (observed `75.0 °C`, read from the video) |
-| TDS observed / error (measured denominator, last fit-valid reading) | `11.56 g/L` / `+0.045 g/L` |
-| water balance residual / energy residual / clip fraction | `3.7e-13 mL` / `2.7e-6` / `0%` |
-| multi-start | 7 starts, `χ² ∈ [9.97, 10.40]` |
+| retention RMSE | `2.59 mL` |
+| retention, model / observed | `53.6 mL` / `52.9 mL` (t = 125 s, last reading before the dripper is lifted) |
+| cup stop error | `+0.20 s` (shared liquid-level operator; observed stop `120.9 s`) |
+| server temperature series (in χ²) | RMSE `0.92 °C`, bias `+0.01 °C` (6 points, `V ≥ 150 mL`) |
+| outflow temperature, out-of-sample | RMSE `2.26 °C`, bias `-0.12 °C` |
+| cup temperature error (diagnostic) | `-0.44 °C` (observed `75.0 °C`, read from the video) |
+| TDS observed / error (measured denominator, last fit-valid reading) | `11.56 g/L` / `+0.106 g/L` |
+| water balance residual / energy residual / clip fraction | `3.8e-13 mL` / `2.7e-6` / `0%` |
+| multi-start | 7 starts, `χ² ∈ [9.94, 9.95]` (k spread 0.1%, Corey n spread 0.4%) |
 
 This table is **not** comparable to the pre-2026-09-27 canonical
 (`kinu29/4:11`, reduced χ² `8.48`) — it is a different brew, measured with a
@@ -265,22 +268,21 @@ refit under the same corrected hydraulic objective; overall status FAIL):
 
 | case | status | reduced χ² | DW / lag-1 (`r/σ`) | retention | cup ΔT | server T(t) RMSE | TDS error | cup stop |
 |---|---|---|---|---|---|---|---|---|
-| `kinu29/4:12` (canonical, video) | `PASS` | `0.358` | `1.34 / 0.326` | `1.1% OK` | `-0.43 °C` | `0.91 °C OK` | `+0.04 OK` | `+0.22 s` |
-| `kinu27/4:12` (video) | `FAIL (whiteness only)` | `0.361` | `0.95 / 0.503` | `0.7% OK` | `-0.01 °C` | n/a (probe QC) | `+0.17 OK` | `-0.10 s` |
-| `kinu28/4:20` (video) | `PASS` | `0.498` | `1.38 / 0.303` | `1.6% OK` | `+0.28 °C` | `1.16 °C OK` | `+0.05 OK` | `+0.49 s` |
-| `kinu29/4:11` (log, `drained_log_bias_suspected`) | `FAIL` | `8.37 FAIL` | `0.30 / 0.851 FAIL` | `3.8% OK` | `-0.005 °C` | n/a | `+0.26 OK` | `-0.02 s` (q-threshold) |
+| `kinu29/4:12` (canonical, video) | `PASS` | `0.358` | `1.34 / 0.327` | `1.4% OK` | `-0.44 °C` | `0.92 °C OK` | `+0.11 OK` | `+0.20 s` |
+| `kinu27/4:12` (video) | `FAIL (whiteness only)` | `0.364` | `0.91 / 0.520` | `0.7% OK` | `-0.01 °C` | n/a (probe QC) | `+0.14 OK` | `-0.25 s` |
+| `kinu28/4:20` (video) | `PASS` | `0.500` | `1.36 / 0.308` | `1.7% OK` | `+0.28 °C` | `1.16 °C OK` | `+0.03 OK` | `+0.48 s` |
+| `kinu29/4:11` (log, `drained_log_bias_suspected`) | `FAIL` | `8.38 FAIL` | `0.30 / 0.851 FAIL` | `3.6% OK` | `-0.003 °C` | n/a | `+0.10 OK` | `+0.20 s` (q-threshold) |
 
-`kinu27/4:12` misses the whiteness gate by `0.003` on lag-1 and is flagged
+`kinu27/4:12` misses the whiteness gate by `0.020` on lag-1 and is flagged
 `server_probe_not_mixed_mean` (its server probe did not read the mixed mean,
 so its server series is excluded and the single cup temperature is used).
+`kinu28/4:20` fits `U_liquid_dripper = 393` inside the physical range
+`[120, 550]`, but its CI upper end (`585`) goes past it.
 `kinu29/4:11` fails reduced χ² and whiteness. The benchmark reload
-reproduces every summary χ² bit for bit. An earlier gap (canonical `9.970` vs
-`10.040`) came from the summary writer truncating `tau_tort` to 11
-significant digits; it now writes round-trip-exact values. Even at
-`rtol = 1e-7`, a ~1e-12 relative parameter change can still move χ² by about
-`0.07–0.1` through the adaptive step sequence. That is far below any stage or
-CI threshold, but it can flip an identifiability level that sits right at a
-boundary (see Refit disclosure point 5).
+reproduces every summary χ² bit for bit. The ODE is integrated piecewise
+between pour-rate breakpoints: integrating straight across them left χ² with
+`0.07–0.17` of path noise at `rtol = 1e-7` and a `−0.03…−0.06` truncation
+bias; piecewise, the noise is ~`1e-8`.
 
 ## Video-derived measurements
 
@@ -447,12 +449,12 @@ sources.
 ### Refit disclosure (2026-09-24, updated 2026-09-28)
 
 1. **What still fails, and why the pre-video picture failed.** As of
-   2026-09-28, after the F12c refit, `kinu29/4:12` and `kinu28/4:20` pass
-   every gate and `kinu27/4:12` fails only residual whiteness (lag-1 `0.503`
+   2026-09-28, after the F13 refit, `kinu29/4:12` and `kinu28/4:20` pass
+   every gate and `kinu27/4:12` fails only residual whiteness (lag-1 `0.520`
    on `r/σ`, gate `≤ 0.5`); `kinu29/4:11` (the only case with no video) fails
-   reduced χ² (`8.37`) and whiteness, and stays flagged
+   reduced χ² (`8.38`) and whiteness, and stays flagged
    `drained_log_bias_suspected`. The passes come partly from computing the
-   whiteness test on `r/σ` (unweighted lag-1 is still `0.54–0.56`). The
+   whiteness test on `r/σ` (unweighted lag-1 is still `0.55–0.57`). The
    pre-2026-09-27 picture — `reduced χ² ∈ [8.49, 29.30]`, `DW ∈ [0.115,
    0.256]`, all four cases showing the same three-segment residual shape in
    phase with the pour rhythm — has been traced to a measurement artifact,
@@ -478,25 +480,30 @@ sources.
    hold); still recorded as a borderline candidate, now superseded by the
    video result rather than resolved by it. One phase-locked residual
    remains on the video-derived cases: model outflow leads the video liquid
-   level at the start of the bloom's first pour (canonical `+6.9 / +6.5 mL`
+   level at the start of the second pour (canonical `+6.9 / +6.5 mL`
    at 45 / 50 s; `kinu27` `+8.8 / +9.3 mL`; `kinu28` peak `+16.6 mL` at 55 s).
    It sits in the σ = 15 mL segment, so it barely registers on the `r/σ`
    gate. A layered (tanks-in-series) bed was built and tested as the
-   candidate mechanism and did not pass (point 10); the mechanism is open.
+   candidate mechanism and did not pass (point 10). A 2026-09-28 diagnostic
+   on the existing video (`EXP-20260928-F13-POUR2-RESTART-DIAGNOSTIC`) rules
+   out the level conversion, foam and scale lag: the lead appears only when a
+   pour restarts an outflow that had stopped (the model pulse is early by
+   `2.3–3.8 s`, with its volume conserved), while later pours shift by
+   `≤ 0.75 s`. The mechanism is still open.
 2. **The three video-derived cases are now a within-instrument cross-check,
    not a mystery.** Before the video correction, `kinu29/4:12` had a
    mass-balance violation in its log record (`drained > poured` at
    `t = 130 s`) and all three lacked a usable ponding/post-pour record, so
    their `k` and `tau_wet_s` sat at the fit's upper bounds — an artifact of
    fitting a broken record, not a property of those three grinds. Refit
-   against the video liquid level, all three converge to `k ∈ [6.5, 7.9] ×
-   10⁻¹¹ m²` after the F12c refit (a `1.2×` spread, vs. `16×` before) and
-   `tau_wet_s ∈ [10.7, 39.3] s` (the canonical value sits near its lower
-   bound, point 5) — consistent in magnitude with each other; `kinu29/4:11`
-   refits to `k = 5.31e-11 m²`, `tau_wet_s = 11.2 s`. This is still not an independent
+   against the video liquid level, all three converge to `k ∈ [6.5, 7.7] ×
+   10⁻¹¹ m²` after the F13 refit (a `1.2×` spread, vs. `16×` before) and
+   `tau_wet_s ∈ [10.0, 41.8] s` (the canonical value sits at its lower
+   bound, and `tau_wet_s` is not a clean wetting time — point 5); `kinu29/4:11`
+   refits to `k = 5.32e-11 m²`, `tau_wet_s = 11.2 s`. This is still not an independent
    cross-validation (each case is fit to its own brew), but it is no longer
    three broken records agreeing only because they are all pinned at the
-   same bound. `kinu29/4:11` remains the outlier (reduced χ² `8.37`;
+   same bound. `kinu29/4:11` remains the outlier (reduced χ² `8.38`;
    `8.65` before the F12c fix) because its `drained` column has
    the same log-record bias with no video available to correct it — see
    `data_quality_flags` in its summary CSV.
@@ -505,43 +512,40 @@ sources.
    volume residual) to floating-point precision, not a separate scale
    reading. It has been removed from `chi2` for this reason and is now a gate
    / diagnostic only (`retention RMSE`, the `≤ 15%` gate above).
-4. **Refit status at `rtol = 1e-7`.** The three video-derived cases were
-   refit 2026-09-27 21:11 → 2026-09-28 00:11 against
-   `*_flow_profile_video.csv` after two fitting-procedure bugs were fixed
-   (the final-cup reading was taken after the dripper was lifted, and the
-   hydraulic stages minimized the total χ² including not-yet-fitted thermal
-   terms; they now minimize `chi2_hydraulic` = volume + stop time + priors).
-   7 starts each (6 Latin Hypercube + 1 sibling warm-start): canonical
-   `χ² ∈ [9.97, 10.40]`, `kinu27/4:12` `[6.97, 7.18]`, `kinu28/4:20`
-   `[14.97, 15.11]` — one basin per case. Before the second fix, `kinu27`'s
-   starts landed at `χ² 26.5–28.6` with stage 7 skipped. `kinu29/4:11`'s
-   loss was also affected by the second bug; its 7-start refit lands at
-   `χ² 234.64` (range `[234.64, 271.96]`). Under the old objective its stage 4
-   accepted preferential flow (`pref_flow_coeff 1.14e-4`); judged on
-   `chi2_hydraulic`, all seven starts reject it (`Δχ²_hyd −0.13 … −0.87`, short
-   of the `−1.0` bar), so that acceptance had been driven by thermal /
-   extraction terms, not hydraulic evidence. Preferential flow is now off in
-   all four cases (`dof 27 → 28` on `kinu29/4:11`); the slight χ² rise
-   (`233.95 → 234.64`) is expected once hydraulics stop yielding to those terms. The earlier `rtol = 1e-6` χ² surface (±7–13 noise) remains
+4. **Refit status at `rtol = 1e-7`.** All four cases were refit
+   2026-09-28 15:57 → 18:56 after the ODE was switched to piecewise
+   integration between pour-rate breakpoints (no model equation, live
+   parameter, bound or observation changed). 7 starts each (6 Latin Hypercube
+   + 1 sibling warm-start): canonical `χ² ∈ [9.94, 9.95]`, `kinu27/4:12`
+   `[6.92, 6.92]`, `kinu28/4:20` `[15.00, 15.01]` — the starts now land on
+   the same point (canonical k spread `3.6% → 0.1%`, Corey n spread
+   `26.1% → 0.4%`), so the earlier spread was numerical noise, not parameter
+   uncertainty. `kinu29/4:11` lands at `χ² 234.93`; two of its starts still
+   fall into a second basin (Corey n `4.4–5.6`, χ² `270–274`), a property of
+   the hand-logged data. Hydraulic stages minimize `chi2_hydraulic` = volume +
+   stop time + priors (since the F12c fix); preferential flow stays off in all
+   four cases. The earlier `rtol = 1e-6` χ² surface (±7–13 noise) remains
    fully superseded.
 5. **Identifiability is uneven.** On the canonical (`kinu29/4:12`,
    2026-09-28): `k` and `tau_tort` are **hard**-identified; `sat_rel_perm_exp`
-   and `tau_wet_s` are medium. `tau_wet_s` dropped from hard to medium and
-   now sits at `10.65 s`, `0.65 s` above its lower bound, with a one-sided CI
-   `[None, 16.57] s`: once the stop time is compared through the shared
-   level operator and the observation window ends at dripper removal, the
-   stop term no longer constrains when outflow really stops. The project
-   rule freezes a parameter only when both CI ends are `None`, so it stays
-   fitted — but `10.65 s` should not be read as an identified wetting time.
+   and `tau_wet_s` are medium. `tau_wet_s` sits **at** its `10 s` lower bound
+   with a one-sided CI `[None, 16.32] s`. A profile scan (2026-09-28) puts the
+   unbounded minimum at `5 s`, only `Δχ² 0.44` lower, and that pull comes
+   from the second-pour restart window (a known structural gap), so the
+   bound is kept. Across cases `tau_wet_s` is `10.0 / 15.7 / 41.8 s`, set by
+   the later pours and the drawdown rather than by the bloom: it behaves as a
+   late-brew retention-shape parameter, not as the bloom wetting time its
+   name implies. The project rule freezes a parameter only when both CI ends
+   are `None`, so it stays fitted — but its value should not be read as an
+   identified wetting time.
    On the thermal side, `U_liquid_dripper` (fitted on video cases) is medium
    and `lambda_server_ambient` (frozen at `3.7e-4`) is weak; with only the
    single cup temperature (`kinu29/4:11`, `kinu27/4:12`) the roles are
    reversed (`λ` fitted, `U = 194` frozen). `k_beta` is medium but frozen;
-   `tau_lag` is weak. `wetbed_rev_gain` and `psi` (not fitted) read medium in
-   the latest scan (wide span `1.39` / `1.25`) and weak in the previous one
-   (`0.97` / `0.88`): they sit on the `Δχ² = 1` boundary, where the solver's
-   `0.07–0.1` path noise decides the label, so neither label is a stable
-   finding. Every CI above is a
+   `tau_lag` is weak. `wetbed_rev_gain` and `psi` (not fitted) read medium
+   (wide span `1.11` / `1.20`); with piecewise integration the label no
+   longer flips between runs, but both sit just above the `Δχ² = 1`
+   boundary, so they carry little information. Every CI above is a
    **conditional-slice lower bound**, not a profile-likelihood interval.
 6. **Honest comparison to the pre-2026-09 baseline.** The pre-2026-09
    baseline's `TDS +0.02 g/L` / `cup +0.01 °C` came from a two-parameter fit
@@ -549,9 +553,9 @@ sources.
    and energy conservation — a calibration residual on an unphysical model,
    not evidence of accuracy. Under the physically-defensible closures here,
    the current canonical (`kinu29/4:12`, video-derived) gives TDS error
-   `+0.045 g/L` (denominator = last fit-valid reading before the dripper is
+   `+0.106 g/L` (denominator = last fit-valid reading before the dripper is
    lifted; F12a's `+0.13 / +0.23 / −0.67 g/L` used a post-removal reading and
-   are superseded) and cup error `-0.43 °C` (diagnostic; the server series is
+   are superseded) and cup error `-0.44 °C` (diagnostic; the server series is
    what enters χ²). The TDS number is a **calibration
    residual, not a prediction**: stage 7 fits the single free parameter
    `tau_tort` to the single measured TDS point, so a residual below the

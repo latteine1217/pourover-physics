@@ -7,6 +7,7 @@ What:
       1. `k` 的 ±1% 微擾（5 點）：χ² 的二階差分絕對值 < 5
       2. 同一條線的相鄰點 |Δχ²| < 8
       3. `tau_tort`（顆粒內曲折度）掃描：χ² 的 **volume 項**變化 < 3
+      4. `k` 的 ±1e-10 相對微擾：|Δχ²| < 1e-6（F13-C：ODE 在注水率斷點間分段積分前為 0.07–0.17）
 
 Why:
     這三條不是精度測試，是**目標函數是否為函數**的測試。
@@ -122,6 +123,14 @@ class TestChi2SurfaceSmoothness(unittest.TestCase):
             msg=f"χ² 二階差分過大（solver 噪音）：{['%.2f' % d for d in second]}"
                 f"；χ²={['%.2f' % c for c in chi2]}",
         )
+
+    def test_chi2_has_no_integration_path_noise(self):
+        """k 的 1e-10 相對微擾下，真實梯度貢獻 < 1e-7；χ² 的任何更大變化都是積分路徑噪音。"""
+        p0 = self.state["params"]
+        base = float(self._evaluate(p0)["chi2"])
+        for eps in (1e-10, -1e-10):
+            d = float(self._evaluate(replace(p0, k=p0.k * (1.0 + eps)))["chi2"]) - base
+            self.assertLess(abs(d), 1e-6, msg=f"k×(1{eps:+.0e}) 使 χ² 移動 {d:+.3e}（路徑噪音）")
 
     # F6e（2026-09-24）：同上，新 preset 下通過、decorator 已移除。歷史證據：
     # F6c 在這條測試上的「通過」（span 0.99）是假象：當時 reload 把 open_rate 0.254

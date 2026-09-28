@@ -260,8 +260,9 @@ CI 為 conditional slice（下界）。若某參數的 CI 兩端皆為 `None`，
 分析不得使用比這更鬆的容差。** `rtol 1e-6` 下 χ² 曲面本身殘留 ±7–13 的
 數值噪音，足以讓 optimizer 停進噪音凹陷、讓 stage accept/reject 判定與
 identifiability 分級不可重現（`docs/experiment_log.md`
-`EXP-20260924-PHASE2-REFIT` §F6c/F6d/F6e）。`rtol 1e-7` 下仍殘留約 0.07–0.1 的路徑噪音，
-落在 identifiability 分級邊界附近的判定不作穩定結論。summary 寫出參數必須
+`EXP-20260924-PHASE2-REFIT` §F6c/F6d/F6e）。**ODE 必須在注水率斷點間分段積分**
+（`core._solve_piecewise`，2026-09-28 F13-C）：跨斷點單段積分時，`rtol 1e-7` 仍殘留
+0.07–0.17 的 χ² 路徑噪音與 −0.03…−0.06 的截斷偏差；分段後噪音 ~1e-8。summary 寫出參數必須
 round-trip 精確（`repr(float(v))`），reload 與 fit 的 χ² 應逐位元相同
 （`EXP-20260928-F12c-FIT-BUGS-AND-REFIT`）。
 
@@ -404,8 +405,8 @@ kinu29 4:12**，見 `docs/experiment_log.md` `EXP-20260927-VIDEO-MEASUREMENT`）
 - 影片版 flow profile（預設來源）：
   `data/kinu_29_light/4:12/kinu29_light_20g_flow_profile_video.csv`
 - measured PSD：`data/kinu_29_light/4:12/kinu29_psd_bins.csv`（per-case 掃描，36.5 px/mm）
-- 現行校準基準：`docs/experiment_log.md` `[BASELINE]`（`BL-20260928-f12c-refit`，
-  `EXP-20260928-F12c-FIT-BUGS-AND-REFIT`）
+- 現行校準基準：`docs/experiment_log.md` `[BASELINE]`（`BL-20260928-f13-refit`，
+  `EXP-20260928-F13-REFIT`）
 
 `kinu29 4:11`（無沖煮錄影）標為**紀錄表案例**：`drained_volume_ml` 有已知偏差
 （`drained_log_bias_suspected`），保留於四 case benchmark，但不作展示基準。
