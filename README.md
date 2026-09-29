@@ -151,13 +151,29 @@ to ~1e-8, which makes the fits and the identifiability scans reproducible.
 | Quantity | How it is measured | Role in the model |
 |---|---|---|
 | Dose, bed height, brew and ambient temperature, dripper mass | Direct measurement | Fixed inputs |
-| Particle-size distribution | Image-analysis export per brew | Fixed input (PSD bins, `d32`, fines fractions, clogging strength `k_beta`) |
+| Particle-size distribution | Image analysis of the grounds with [coffeegrindsize](https://github.com/latteine1217/coffeegrindsize), one export per brew | Fixed input (PSD bins, `d32`, fines fractions, clogging strength `k_beta`) |
 | Poured volume `V_in(t)` | Scale under the server, read frame by frame from the brew video (1 s grid) | Fixed input (pour schedule) |
 | Drained volume `V_out(t)` | Liquid level on the server's printed graduations, read frame by frame from the video | Fit target |
 | Stop time | Same liquid-level readings, through one stop-time rule applied identically to model and measurement | Fit target |
 | Server temperature `T(t)` | Thermocouple display in the video | Fit target (heat) |
 | Outlet temperature | Second thermocouple channel in the video | Out-of-sample check |
 | Final TDS | Refractometer | Fit target (extraction) |
+
+**Particle-size distribution.** Each brew's grounds are photographed on a
+white background and segmented with
+[coffeegrindsize](https://github.com/latteine1217/coffeegrindsize). Its
+per-particle export (`data/<case>/PSD_export_data.csv`) is read by
+`pour_over/psd.py`:
+
+- `PIXEL_SCALE` is in px/mm, set from a reference length in the photo, and
+  is the only source of absolute scale;
+- `LONG_AXIS` and `SHORT_AXIS` are half-axes in pixels, with
+  π · `SHORT_AXIS` · `LONG_AXIS` = `SURFACE`, so the equal-area diameter is
+  2·√(`SHORT_AXIS` · `LONG_AXIS`) / `PIXEL_SCALE`;
+- the export's `VOLUME` column is a pseudo-3D estimate and is not used.
+
+A change to the export format in coffeegrindsize requires the matching change
+in `psd.py` and in `tests/test_psd_invariants.py`.
 
 **Video readout.** Frames are extracted at 1 fps and their timestamps are
 checked against the raw stream. The scale's built-in timer runs 1.86% fast

@@ -125,7 +125,7 @@
 - `flow_profile_csv`（影片版）: `data/kinu_29_light/4:12/kinu29_light_20g_flow_profile_video.csv`
 - `flow_profile_csv`（紀錄表，`source="log"` 可強制讀取）: `data/kinu_29_light/4:12/kinu29_light_20g_flow_profile.csv`
 - `video_annotations`: `data/kinu_29_light/4:12/video/IMG_3346_annotations.json`（`dripper_removed_frame = 131` → 126.94 s）
-- `psd_bins_csv`: `data/kinu_29_light/4:12/kinu29_psd_bins.csv`（per-case scan，36.5 px/mm）
+- `psd_bins_csv`: `data/kinu_29_light/4:12/kinu29_psd_bins.csv`（per-case scan，34.27 px/mm；2026-09-30 更正：原誤記 36.5，為沿用 `kinu29 4:11` 掃描之值。程式一直讀 raw CSV 的 `PIXEL_SCALE` = 34.2658，擬合結果不受影響）
 - `psd_summary_csv`: `data/kinu_29_light/4:12/kinu29_psd_summary.csv`
 - `benchmark_csv`: `data/benchmark_suite_summary.csv`
 - `legacy_psd_bins_csv`: `data/kinu29_psd_bins.csv`（頂層 legacy 掃描，17.2 px/mm；僅作 fallback）
