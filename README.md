@@ -395,3 +395,7 @@ is in `docs/literature_map.md`. Core sources:
 
 The development history, including every model change, rejected mechanism and
 refit, is recorded in `docs/experiment_log.md`.
+
+## License
+
+MIT — see `LICENSE`.
