@@ -1752,8 +1752,10 @@ def fit_k_kbeta_from_flow_profile(
       stage 1  (log k, log sat_rel_perm_exp, log tau_wet_s) 3D Powell
       stage 2  同上，從 stage 1 的解再收斂一次（不同起點 → 確認 basin）
       stage 4  （選用）`pref_flow_coeff`
-      stage 5  `log lambda_server_ambient` 1D Powell（F6d 起 `U_liquid_dripper`
-               凍結為 `U_LIQUID_DRIPPER_FIXED_W_M2K`；舊 stage 6 已不存在）
+      stage 5  熱端單一自由度（F11 起依熱觀測型態分配；舊 stage 6 已不存在）：
+               有分享壺溫時序的影片 case 擬 `log U_liquid_dripper_W_m2K`、
+               `lambda_server_ambient` 凍結 3.7e-4；單點杯溫 case 擬
+               `log lambda_server_ambient`、U 凍結為 `U_LIQUID_DRIPPER_FIXED_W_M2K`
       stage 7  由 `EXTRACTION_FIT_PARAMS` 驅動的萃取端校準
       final    以 `SOLVER_FINE` 重算一次；`compute_ci=True` 時再跑 conditional CI
 
@@ -1777,8 +1779,10 @@ def fit_k_kbeta_from_flow_profile(
            - `sat_rel_perm_exp` 開放（Class C，弱 prior 中心 3.0、σ 0.20 dex）
          live 參數總數不變（dof 反而 +1，因為凍結兩個只開放一個）。
       2. **熱端**：F2 起以物理熱導 `U_liquid_dripper_W_m2K` 取代
-         `lambda_liquid_dripper`（DEPRECATED）；F6d 起 U 凍結在 prior 中心
-         （CI None/None、thermal identifiability weak），stage 5 只擬 λ_server。
+         `lambda_liquid_dripper`（DEPRECATED）；F6d 起單點杯溫 case 的 U 凍結在
+         prior 中心（單點杯溫不識別 U），stage 5 只擬 λ_server。F11 起分享壺溫時序
+         進 χ² 的影片 case 改擬 U、凍結 λ_server（時序下 U–λ 為 ridge，只撐得起
+         一個熱端自由度）。
       3. **所有 stage 的接受條件統一為 Δχ² ≤ −1.0 且 clip flag 未觸發**。
          舊版三種尺度的 volume guard（+0.15 mL / +0.20 mL / +0.5 pt）與零餘裕
          的嚴格 `<` 已刪除——它們在不同 case 上代表不同嚴格程度，且其中兩個
@@ -3067,7 +3071,7 @@ def generate_measured_flow_fit_artifacts(
       展示頁的 lead figure 與校準摘要應和目前的正式擬合流程保持同一套參數，
       避免 code path、圖檔名稱與 README 各自漂移。
       殘差與保水兩張圖由同一次 fit 一併輸出（F6，2026-09-24）：它們是
-      `index.html` / `README.md` 直接引用的路徑，若要另外手動產生，文件
+      `README.md` 與 benchmark 公開的產物路徑，若要另外手動產生，文件
       公佈的「跑這一行就有」就是假的。
       `use_multi_start=True`（預設）以 3× 成本換取 deterministic basin 選擇
       （參見 `fit_with_multi_start` docstring）。

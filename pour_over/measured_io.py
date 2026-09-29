@@ -640,7 +640,7 @@ def flow_profile_quality_flags(prof: dict) -> list[str]:
         一個沒有積水、也沒有注水後滴流的紀錄，對 Darcy 滲透率幾乎沒有約束力
         （驅動水頭與末段衰減這兩段訊號都不在資料裡），`k` 會被推到邊界。
         把它寫成旗標並一路帶進 summary / benchmark CSV，是為了讓下游
-        （README / index.html / EXPERIMENT_LOG）不會把這種 case 的校準值
+        （README / `docs/experiment_log.md`）不會把這種 case 的校準值
         當成可交叉驗證的獨立結果——這是 F6b §1 的主要結論。
 
         門檻只有兩個且都掛在量測 σ 上（見模組頂端的 Why），不是可調參數。

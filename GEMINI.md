@@ -34,7 +34,7 @@
 3. measured data 優先於 proxy。
 4. 可直接量測的量不得拿去吸收模型誤差。
 5. 維持單一主模型，不保留平行舊分支。
-6. `viz.py`、`index.html`、`README.md` 必須與主模型同步。
+6. `viz.py`、`README.md` 必須與主模型同步。
 7. 預設沖煮上限為 `180 s`，除非使用者另有要求。
 8. 若新機制只是補償舊錯誤，應重寫 closure，不要再疊 multiplier。
 
@@ -60,7 +60,8 @@
 ### 3.2 萃取
 
 允許：
-- fast pool：Noyes-Whitney 型 `A_i · D(T) / δ_i`，`δ_i = min(shell_thickness, R_i)`
+- fast pool：破壁殼層一階釋放 `dM_i/dt = −λ_fast,i·M_i`，`λ_fast,i = π²D/(τ_tort·(2δ_i)²)`
+  （內面被核心封住的殼層之首特徵值），`δ_i = min(shell_thickness, R_i)`
 - slow pool：Crank 球形擴散首項 `dM_i/dt = −λ_i·M_i`，`λ_i = π²D/(τ_tort·R_i²)`
 - 溫度相依**只**走 Stokes-Einstein `D(T) = k_B T/(6π μ(T) r)`
 - measured PSD bin-resolved `A_i, δ_i, M_i`
@@ -294,21 +295,16 @@ benchmark CSV 的 `preprocess_corrections` 欄，供稽核（`docs/experiment_lo
 - 所有 `compare_*` 以最新 calibrated baseline 為中心
 - 不得繼續展示舊 baseline
 
-### `index.html`
-
-首頁優先展示：
-- calibrated flow-fit panel
-- calibrated flow diagnostics
-- calibrated extraction quality
-
-若圖檔或敘事更新，必須同步修改。
-
 ### `README.md`
 
-README 必須與首頁使用同一套：
-- 主模型
-- 圖檔
-- calibration reference
+README 是給外部讀者的專案說明，主軸是「用了哪些物理機制去擬合實驗」：
+- 現行主模型的物理機制與擬合方法、現行校準結果（引用最新 calibrated artifact 與圖檔）、
+  已知限制；一律用現在式描述現況
+- 不寫開發歷程：日期、F 代號、改動前後對照、被否定的機制、改名歷史都只寫在
+  `docs/experiment_log.md`，README 只留一行指標
+- 校準基準更新時，同步更新 README 的結果表與圖
+
+（`index.html` 展示頁已於 2026-09-30 棄用並刪除。）
 
 ---
 
@@ -366,7 +362,7 @@ README 必須與首頁使用同一套：
 - 避免 ad-hoc 腳本整檔覆寫，除非必要
 - 超過三層巢狀迴圈時，先質疑演算法設計
 - 改動主模型時，至少同步檢查 `viz.py`
-- 視情況同步 `index.html`、`README.md`
+- 視情況同步 `README.md`
 
 ---
 
@@ -382,9 +378,7 @@ README 必須與首頁使用同一套：
    - calibrated flow diagnostics（含殘差時序與 retention 面板）
    - calibrated extraction quality
 5. 若改動 `viz.py`，需重跑相關 `compare_*`
-6. 若改動展示敘事，需同步檢查：
-   - `index.html`
-   - `README.md`
+6. 若改動展示敘事或校準基準，需同步檢查 `README.md`
 7. 若有新結論，更新 `docs/experiment_log.md`
 8. 檢視該 case summary / benchmark CSV 的 `preprocess_corrections` 欄，
    確認預處理修正與預期一致（未預期的修正代表資料或程式有問題）
