@@ -171,6 +171,15 @@
 
 ## 5. PSD 規範
 
+PSD 來源：各 case 目錄的 `PSD_export_data.csv` / `PSD_export_data_stats.csv` 是使用者的
+[coffeegrindsize](https://github.com/latteine1217/coffeegrindsize) fork（`coffeegrindsize_core.py`）
+的匯出，兩專案以此欄位契約掛鉤（2026-09-30 對 fork 原始碼驗證）：
+- `PIXEL_SCALE`：px/mm（= 參考線像素長 / 實際 mm）
+- `LONG_AXIS`：顆粒像素到形心的最大距離（半軸，px）；`SHORT_AXIS` = `SURFACE`/(π·`LONG_AXIS`)（半軸）
+- 等面積直徑 = 2·√(`SHORT_AXIS`·`LONG_AXIS`)/`PIXEL_SCALE`（與上游 `compute_statistics` 同式）
+- `ROUNDNESS` = `SHORT_AXIS`/`LONG_AXIS`；`VOLUME` = π·`SHORT_AXIS`²·`LONG_AXIS` 為偽 3D 量，不採用
+- 任一端改動欄位名稱或定義，必須同步 `pour_over/psd.py` 與 `tests/test_psd_invariants.py`
+
 若有 measured PSD：
 - 必須優先使用 `psd_bins_csv_path`
 - 絕對尺度由 raw CSV 的 `PIXEL_SCALE`（單位 **px/mm**）決定；缺欄或非唯一一律 raise
@@ -398,7 +407,8 @@ kinu29 4:12**，見 `docs/experiment_log.md` `EXP-20260927-VIDEO-MEASUREMENT`）
   已由 `meta_consensus` 依檔內多數值修正，見 §4.B；使用者 2026-09-27 確認 123.5 g 正確）
 - 影片版 flow profile（預設來源）：
   `data/kinu_29_light/4:12/kinu29_light_20g_flow_profile_video.csv`
-- measured PSD：`data/kinu_29_light/4:12/kinu29_psd_bins.csv`（per-case 掃描，36.5 px/mm）
+- measured PSD：`data/kinu_29_light/4:12/kinu29_psd_bins.csv`（per-case 掃描，34.27 px/mm；
+  36.54 px/mm 是 `kinu29 4:11` 的掃描）
 - 現行校準基準：`docs/experiment_log.md` `[BASELINE]`（`BL-20260928-f13-refit`，
   `EXP-20260928-F13-REFIT`）
 
