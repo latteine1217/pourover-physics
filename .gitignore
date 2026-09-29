@@ -16,10 +16,9 @@ build/
 !v60_tds.png
 !v60_grind.png
 !v60_thermal.png
-!v60_multi_ode_coupling.png
 
 # Calibrated fit artifacts（F6，2026-09-24）：
-# 這三類圖是 README / index.html 直接引用的 calibrated 展示產物，
+# 這三類圖是 README 與 benchmark 公開的 calibrated 展示產物，
 # 與 summary CSV 同屬「一次校準的完整紀錄」，必須跟著版控，否則
 # 文件會指向本機才有的檔案（AGENTS.md §7「不得繼續展示舊 baseline」）。
 # 其餘 data/ 下的一次性掃描圖仍被 `*.png` 忽略。
