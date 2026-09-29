@@ -281,6 +281,9 @@ OUTFLOW_TEMP_SERIES_IN_CHI2 = False
 #       本次**未重擬**，只以新容差重新評估並改寫 summary 的指標欄
 #       （summary 記 `fit_solver_rtol=1e-6`、`solver_rtol_eval=1e-7`）。
 #       目標狀態：下一輪 multi-start 以本 preset 重擬四 case。
+# F13-C（2026-09-28）：rtol 1e-7 下殘留的 0.07–0.17 路徑噪音來自單段積分跨過注水率斷點，
+#       不是容差不足；`core._solve_piecewise` 分段積分後噪音 ~1e-8，rtol 1e-7 的 χ² 截斷誤差
+#       4e-5（單段需 rtol 1e-10 才達到）。preset 不變。
 SOLVER_COARSE: dict = {"n_eval": 720, "rtol": 1e-7, "atol": 1e-9, "max_step": 0.5}
 SOLVER_FINE: dict = {"n_eval": 1800, "rtol": 1e-7, "atol": 1e-9, "max_step": 0.5}
 
@@ -330,11 +333,13 @@ TAU_LAG_BOUNDS_S = (0.2, 6.0)
 #       凍結值 0.5 s 不同，那個常數（+1.01）還會懲罰我們自己選定的物理錨點。
 TAU_LAG_FIXED_S = 0.5
 
-# tau_wet_s：F2b 的悶蒸潤濕時間常數（Class C）。
-# Why 它必須進 fit 而不是凍結：它的識別資訊主要來自 `retained_mass_g` 時序
-#     （悶蒸期床內淨排水 24 mL 與末段保水 52.1 g 這兩條硬事實）。
-#     沒有 loss 的 retention 項，(k, τ_wet) 就是一條平 ridge——這正是 F2b 指出
-#     retention 項是必要的原因。起點 25 s 取自 F2b 的參考點。
+# tau_wet_s：F2b 的潤濕狀態 w 的建立時間常數（Class C）。
+# Why 仍進 fit：F13-B profile（2026-09-28）顯示 kinu27 / kinu28 兩側可辨識，canonical 只有上側可辨識。
+#     識別資訊來自 V_out 曲線，以第三注之後的注水期與排水段為主，悶蒸窗幾乎不約束；
+#     不是 F2b 原寫的 `retained_mass_g` 時序（該項自 F6b 起已不在 χ² 內）。
+#     三案值差一個數量級，與「悶蒸潤濕時間」的名義不符，屬結構問題（experiment log F13-B）。
+# bounds：下界 10 s 無獨立物理依據，但放寬只換到 canonical Δχ² 0.44，且拉力來自第二注重啟窗
+#     （已知結構缺陷，F13 診斷），故不放寬。起點 25 s 取自 F2b 的參考點。
 TAU_WET_BOUNDS_S = (10.0, 60.0)
 TAU_WET_INIT_S = 25.0
 
