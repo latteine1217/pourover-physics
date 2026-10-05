@@ -276,7 +276,7 @@ Canonical brew `kinu29/4:12` (summary:
 | Parameter | Value | 95% CI (conditional slice) |
 |---|---|---|
 | `k` | 6.46e-11 m² | [6.36e-11, 6.75e-11] |
-| Corey `n` | 3.14 | [2.13, 4.25] |
+| Corey `n` | 3.13 | [2.13, 4.25] |
 | `τ_wet` | 10.0 s (at lower bound) | [—, 16.3] |
 | `U` | 258 W/(m²K) | [184, 362] |
 | `τ_tort` | 7.47 | — |
