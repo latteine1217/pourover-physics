@@ -23,7 +23,7 @@ from pathlib import Path
 
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.optimize import minimize
+from scipy.optimize import least_squares, minimize
 from scipy.interpolate import interp1d
 
 from .params import EXTRACTION_FIT_SPEC, V60Params, PourProtocol, RoastProfile
@@ -421,6 +421,22 @@ CLIP_PENALTY_CHI2 = 1.0e4
 # stage 接受條件：Δχ² ≤ −1.0（1σ 等級的實質改善），取代舊的三種尺度 guard
 # （+0.15 mL / +0.20 mL / +0.5 pt）與零餘裕的嚴格 `<`。
 STAGE_ACCEPT_DELTA_CHI2 = -1.0
+
+# 水力 stage（1/2）的 least_squares 設定（見 `fit_k_kbeta_from_flow_profile._hyd_lsq`）。
+# HYD_LSQ_DIFF_STEP_DEX：前向差分的絕對步長 [dex]。下限由 χ² 路徑噪音決定（~1e-8，
+#   步長 1e-3 dex 造成的 Δχ² 在 canonical 為 1e-3–1e-1 量級，訊噪比 > 1e4）；
+#   上限由曲率決定（CI 寬度 0.01–0.3 dex，截斷誤差 ∝ 步長）。
+# 容差：ftol 1e-6 對 cost ~ 2–120 等於 Δχ² ~ 1e-6–1e-4，遠小於 stage 接受門檻 1.0。
+HYD_LSQ_DIFF_STEP_DEX = 1e-3
+HYD_LSQ_FTOL = 1e-6
+HYD_LSQ_XTOL = 1e-6
+HYD_LSQ_GTOL = 1e-8
+HYD_LSQ_MAX_NFEV = 100
+
+
+def _lsq_nsim(res) -> int:
+    """least_squares 的實際模擬次數：`nfev` 不含差分 Jacobian 的呼叫，需另加 njev·n。"""
+    return int(res.nfev + (res.njev or 0) * res.x.size)
 
 # stage 7（萃取）啟動前的水力自洽條件：模型末端 V_out 與量測差 ≤ 5%。
 # Why: TDS = M_extracted / V_out。若 V_out 本身偏 9%，stage 7 會用萃取參數去
@@ -1064,6 +1080,22 @@ def _chi2_evaluate(
         chi2 += CLIP_PENALTY_CHI2
         chi2_hydraulic += CLIP_PENALTY_CHI2
 
+    # 水力子目標的帶號殘差向量：Σ r² ≡ chi2_hydraulic（水力 stage 的 least_squares 吃它）。
+    # Why：χ² 本身是加權殘差平方和，給 optimizer 殘差向量才能用 Gauss-Newton 型的
+    #      Jacobian 步；只給純量時 Powell 一次水力 stage 要 ~1200 次模擬。
+    hyd_resid = [v_resid / sigma_v,
+                 [stop_err / MEASUREMENT_SIGMA["stop_time_s"],
+                  (np.log10(max(params_try.k_beta, 1e-30)) - np.log10(max(anchor, 1e-30))) / sigma_dex]]
+    if "sat_rel_perm_exp" in prior_terms:
+        hyd_resid.append([(np.log10(float(n_corey)) - np.log10(SAT_REL_PERM_EXP_PRIOR))
+                          / SAT_REL_PERM_EXP_PRIOR_SIGMA_DEX])
+    if clip_flag:
+        hyd_resid.append([np.sqrt(CLIP_PENALTY_CHI2)])
+    hyd_resid = np.concatenate([np.asarray(r, dtype=float) for r in hyd_resid])
+    # 兩條路徑必須是同一個量；不一致代表有人改了 chi2_hydraulic 的組成卻沒同步這裡
+    if not np.isclose(float(hyd_resid @ hyd_resid), chi2_hydraulic, rtol=1e-12, atol=1e-12):
+        raise RuntimeError(f"水力殘差向量 Σr² = {float(hyd_resid @ hyd_resid)!r} ≠ chi2_hydraulic = {chi2_hydraulic!r}")
+
     dof = max(n_obs - int(n_fit_params), 1)
     # 白噪音檢定吃標準化殘差（F12a；見 WHITENESS_SUBSET_SIGMA_MAX_ML 的 Why）。
     z_resid = v_resid / sigma_v
@@ -1076,6 +1108,7 @@ def _chi2_evaluate(
     out = {
         "chi2": float(chi2),
         "chi2_hydraulic": float(chi2_hydraulic),
+        "hydraulic_residuals": hyd_resid,
         "chi2_data": float(chi2_data),
         "reduced_chi2": float(chi2_data / dof),
         "dof": int(dof),
@@ -1966,9 +1999,33 @@ def fit_k_kbeta_from_flow_profile(
             kw["tau_wet_s"] = float(10.0 ** log_x[2])
         return dataclasses.replace(params_base, **kw), tau_lag_fixed
 
-    def _hyd_chi2(log_x: np.ndarray) -> float:
+    def _hyd_resid(log_x: np.ndarray) -> np.ndarray:
         p, tau = _hyd_params(log_x)
-        return float(_evaluate(p, tau, coarse=True)["chi2_hydraulic"])
+        return np.asarray(_evaluate(p, tau, coarse=True)["hydraulic_residuals"], dtype=float)
+
+    hyd_lo = np.array([b[0] for b in hyd_bounds], dtype=float)
+    hyd_hi = np.array([b[1] for b in hyd_bounds], dtype=float)
+
+    def _hyd_lsq(x_start: np.ndarray):
+        """
+        水力 stage：trust-region reflective 最小平方（log10 空間，帶 bounds）。
+
+        What: 最小化 Σ r²（= `chi2_hydraulic`），Jacobian 以前向差分估計。
+        Why:  χ² 是加權殘差平方和，Gauss-Newton 型方法每次迭代只需 (n+1) 次模擬；
+              Powell 不用殘差結構，canonical 單起點 stage 1 實測 1227 次模擬。
+              差分步長固定為 `HYD_LSQ_DIFF_STEP_DEX`（絕對 dex），遠大於分段積分後
+              χ² 的路徑噪音（~1e-8，F13-C），又遠小於參數 CI 寬度（~0.01–0.3 dex）。
+        """
+        x_start = np.clip(np.asarray(x_start, dtype=float), hyd_lo, hyd_hi)
+        # scipy 的差分步長為 diff_step·max(1, |x|)；除回去使絕對步長恆為 HYD_LSQ_DIFF_STEP_DEX
+        diff_step = HYD_LSQ_DIFF_STEP_DEX / np.maximum(1.0, np.abs(x_start))
+        res = least_squares(
+            _hyd_resid, x_start, bounds=(hyd_lo, hyd_hi), method="trf",
+            diff_step=diff_step, x_scale=1.0,
+            ftol=HYD_LSQ_FTOL, xtol=HYD_LSQ_XTOL, gtol=HYD_LSQ_GTOL, max_nfev=HYD_LSQ_MAX_NFEV,
+        )
+        res.chi2 = float(2.0 * res.cost)   # least_squares 的 cost = ½ Σ r²
+        return res
 
     x0 = [
         np.log10(np.clip(params_base.k, *K_BOUNDS_M2)),
@@ -1981,26 +2038,19 @@ def fit_k_kbeta_from_flow_profile(
 
     if carry is None:
         t0 = _stage_start()
-        res_stage1 = minimize(
-            _hyd_chi2, x0, method="Powell", bounds=hyd_bounds,
-            options={"xtol": 1e-3, "ftol": 1e-5, "maxiter": 90, "disp": False},
-        )
-        _stage_end("stage1_hydraulic", t0, nfev=getattr(res_stage1, "nfev", None))
-        chi2_stage1 = float(res_stage1.fun)
+        res_stage1 = _hyd_lsq(x0)
+        _stage_end("stage1_hydraulic", t0, nfev=_lsq_nsim(res_stage1))
+        chi2_stage1 = res_stage1.chi2
 
+        # stage 2：從 stage 1 的解重啟一次，確認已在極小值（重新估 Jacobian、信賴域重設）
         t0 = _stage_start()
-        res_stage2 = minimize(
-            _hyd_chi2, np.asarray(res_stage1.x, dtype=float), method="Powell", bounds=hyd_bounds,
-            options={"xtol": 1e-3, "ftol": 1e-5, "maxiter": 90, "disp": False},
-        )
-        _stage_end("stage2_hydraulic", t0, nfev=getattr(res_stage2, "nfev", None))
-        # Powell 從同一點重啟後可能沿新方向走一段又回不來，收在略高的 χ² 上。
-        # 取兩者中較低者，否則 stage 2 會變成「有時候讓結果變差」的一步。
-        res_hyd = res_stage1 if chi2_stage1 <= float(res_stage2.fun) else res_stage2
-        hyd_converged = bool(abs(chi2_stage1 - float(res_stage2.fun)) < 0.05)
+        res_stage2 = _hyd_lsq(res_stage1.x)
+        _stage_end("stage2_hydraulic", t0, nfev=_lsq_nsim(res_stage2))
+        res_hyd = res_stage1 if chi2_stage1 <= res_stage2.chi2 else res_stage2
+        hyd_converged = bool(abs(chi2_stage1 - res_stage2.chi2) < 0.05)
         if verbose and not hyd_converged:
             print(f"  [stage2] 未達 Δχ² < 0.05（stage1 {chi2_stage1:.3f} → "
-                  f"stage2 {float(res_stage2.fun):.3f}；採用 χ² 較低者）")
+                  f"stage2 {res_stage2.chi2:.3f}；採用 χ² 較低者）")
 
         params_fit, tau_lag_fit = _hyd_params(np.asarray(res_hyd.x, dtype=float))
     else:
