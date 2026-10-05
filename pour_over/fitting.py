@@ -10,11 +10,15 @@ Why:
   分兩階段獨立優化可降低維度、避免高維非凸陷阱。
 """
 
+import contextlib
 import dataclasses
 import csv
 import itertools
+import multiprocessing as mp
+import os
 import time
 import warnings
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 import numpy as np
@@ -2940,6 +2944,73 @@ def _latin_hypercube_starts(n: int, seed: int) -> list[V60Params]:
     ]
 
 
+# 子行程內把 BLAS / OpenMP 執行緒數限為 1。
+# Why: N 個 worker 各自開滿核心數的 BLAS 執行緒會超訂 CPU。這些變數在 BLAS 載入時
+#      才被讀取，而 spawn 子行程在執行 initializer 前就已 import numpy，所以必須在
+#      子行程誕生前寫進父行程環境（子行程繼承），pool 結束後還原。
+_BLAS_THREAD_ENV_VARS = (
+    "OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "VECLIB_MAXIMUM_THREADS",
+)
+
+
+@contextlib.contextmanager
+def _single_thread_blas_env():
+    saved = {k: os.environ.get(k) for k in _BLAS_THREAD_ENV_VARS}
+    os.environ.update({k: "1" for k in _BLAS_THREAD_ENV_VARS})
+    try:
+        yield
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
+def _start_tau_wet_init(p_init: V60Params) -> float:
+    return float(getattr(p_init, "tau_wet_s", TAU_WET_INIT_S) or TAU_WET_INIT_S)
+
+
+def _fit_one_start(
+    i: int,
+    p_init: V60Params,
+    csv_path: str | Path,
+    fit_kwargs: dict,
+    verbose: bool,
+) -> dict:
+    """
+    What: multi-start 的單一起點擬合；串行與平行路徑共用。
+    Why:  module-level 才能被 spawn 子行程 pickle；兩條路徑呼叫同一函式，
+          保證每個起點的計算逐位元相同。
+    """
+    tau_wet_init = _start_tau_wet_init(p_init)
+    p_fit, info = fit_k_kbeta_from_flow_profile(
+        csv_path=csv_path,
+        params_init=p_init,
+        tau_wet_init_s=tau_wet_init,
+        verbose=verbose,
+        **fit_kwargs,
+    )
+    return {
+        "start_idx": i,
+        "k_init": float(p_init.k),
+        "sat_rel_perm_exp_init": float(p_init.sat_rel_perm_exp),
+        "tau_wet_init_s": tau_wet_init,
+        "k_beta_init": float(p_init.k_beta),
+        "k_fit": float(info["k_fit"]),
+        "k_beta_fit": float(info["k_beta_fit"]),
+        "sat_rel_perm_exp_fit": float(info["sat_rel_perm_exp_fit"]),
+        "tau_wet_s_fit": float(info.get("tau_wet_s_fit", np.nan)),
+        "tau_lag_fit": float(info["tau_lag_s"]),
+        "rmse_ml": float(info["rmse_ml"]),
+        "chi2": float(info["chi2"]),
+        "reduced_chi2": float(info["reduced_chi2"]),
+        "total_loss": float(info["chi2"]),
+        "params_fit": p_fit,
+        "info": info,
+    }
+
+
 def fit_with_multi_start(
     csv_path: str | Path,
     starts: list[V60Params] | None = None,
@@ -2948,9 +3019,14 @@ def fit_with_multi_start(
     pref_tau_decay_fixed: float = DEFAULT_PREF_FLOW_TAU_DECAY_FIXED,
     compute_ci: bool = True,
     verbose: bool = True,
+    max_workers: int | None = None,
 ) -> tuple[V60Params, dict]:
     """
     Multi-start wrapper：對 N 個起點各跑一次擬合，取最低 χ² 者為 canonical fit。
+
+    平行化：起點彼此獨立，各起點在獨立 spawn 子行程中執行（worker 數預設
+    `min(len(starts), os.cpu_count())`）。`max_workers=1` 在主行程串行執行、
+    不開 pool。兩條路徑每個起點的計算完全相同，結果依起點 index 收集。
 
     What（F6b 起）：
         `MULTI_START_LHS_N` 個固定 seed 的 Latin hypercube 起點，覆蓋 stage 1/2
@@ -2980,41 +3056,47 @@ def fit_with_multi_start(
             except (TypeError, ValueError):
                 pass
 
-    multi_results: list[dict] = []
-    for i, p_init in enumerate(starts):
-        tau_wet_init = float(getattr(p_init, "tau_wet_s", TAU_WET_INIT_S) or TAU_WET_INIT_S)
+    fit_kwargs = dict(
+        fit_preferential_flow=fit_preferential_flow,
+        pref_open_rate_fixed=pref_open_rate_fixed,
+        pref_tau_decay_fixed=pref_tau_decay_fixed,
+        compute_ci=compute_ci,
+    )
+    n_workers = min(len(starts), os.cpu_count() or 1) if max_workers is None else int(max_workers)
+    if n_workers < 1:
+        raise ValueError(f"max_workers 必須 ≥ 1，收到 {max_workers}")
+
+    if n_workers == 1:
+        multi_results = []
+        for i, p_init in enumerate(starts):
+            if verbose:
+                print(f"=== Multi-start fit {i+1}/{len(starts)} "
+                      f"(k_init={p_init.k:.3e}, n_init={p_init.sat_rel_perm_exp:.3f}, "
+                      f"tau_wet_init={_start_tau_wet_init(p_init):.1f}) ===")
+            multi_results.append(_fit_one_start(i, p_init, csv_path, fit_kwargs, verbose))
+    else:
+        # 子行程以 verbose=False 執行：逐 stage 的 print 會在多行程間交錯；
+        # stage timing 不受 verbose 影響，照常寫進各起點 info["stage_timings"]。
         if verbose:
-            print(f"=== Multi-start fit {i+1}/{len(starts)} "
-                  f"(k_init={p_init.k:.3e}, n_init={p_init.sat_rel_perm_exp:.3f}, "
-                  f"tau_wet_init={tau_wet_init:.1f}) ===")
-        p_fit, info = fit_k_kbeta_from_flow_profile(
-            csv_path=csv_path,
-            params_init=p_init,
-            tau_wet_init_s=tau_wet_init,
-            fit_preferential_flow=fit_preferential_flow,
-            pref_open_rate_fixed=pref_open_rate_fixed,
-            pref_tau_decay_fixed=pref_tau_decay_fixed,
-            compute_ci=compute_ci,
-            verbose=verbose,
-        )
-        multi_results.append({
-            "start_idx": i,
-            "k_init": float(p_init.k),
-            "sat_rel_perm_exp_init": float(p_init.sat_rel_perm_exp),
-            "tau_wet_init_s": tau_wet_init,
-            "k_beta_init": float(p_init.k_beta),
-            "k_fit": float(info["k_fit"]),
-            "k_beta_fit": float(info["k_beta_fit"]),
-            "sat_rel_perm_exp_fit": float(info["sat_rel_perm_exp_fit"]),
-            "tau_wet_s_fit": float(info.get("tau_wet_s_fit", np.nan)),
-            "tau_lag_fit": float(info["tau_lag_s"]),
-            "rmse_ml": float(info["rmse_ml"]),
-            "chi2": float(info["chi2"]),
-            "reduced_chi2": float(info["reduced_chi2"]),
-            "total_loss": float(info["chi2"]),
-            "params_fit": p_fit,
-            "info": info,
-        })
+            print(f"=== Multi-start: {len(starts)} starts on {n_workers} worker processes ===")
+        by_idx: dict[int, dict] = {}
+        with _single_thread_blas_env(), ProcessPoolExecutor(
+            max_workers=n_workers, mp_context=mp.get_context("spawn"),
+        ) as pool:
+            futures = [
+                pool.submit(_fit_one_start, i, p_init, csv_path, fit_kwargs, False)
+                for i, p_init in enumerate(starts)
+            ]
+            for fut in as_completed(futures):
+                r = fut.result()   # 子行程例外在此重拋，不吞錯
+                by_idx[r["start_idx"]] = r
+                if verbose:
+                    print(f"  [done {len(by_idx)}/{len(starts)}] start {r['start_idx']}: "
+                          f"chi2={r['chi2']:.4f}, k={r['k_fit']:.3e}, "
+                          f"n={r['sat_rel_perm_exp_fit']:.3f}, tau_wet={r['tau_wet_s_fit']:.2f}, "
+                          f"wall={r['info'].get('fit_wall_s', float('nan')):.0f}s")
+        # 依起點 index 排序（非完成順序），使 winner 的 tie-break 與串行路徑相同。
+        multi_results = [by_idx[i] for i in range(len(starts))]
 
     best = min(multi_results, key=lambda r: r["chi2"])
     if verbose:
