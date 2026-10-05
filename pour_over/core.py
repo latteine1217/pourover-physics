@@ -32,7 +32,7 @@ V60 手沖咖啡 ODE 模擬引擎
 import warnings
 
 import numpy as np
-from scipy.integrate import solve_ivp
+from scipy.integrate import RK45
 
 from .params import (
     V60Params, PourProtocol, RHO, CP_WATER,
@@ -64,38 +64,58 @@ def _cumtrapz(y, x) -> np.ndarray:
     return np.concatenate(([0.0], np.cumsum(inc)))
 
 
-def _solve_piecewise(rhs, t_end: float, y0, t_eval, breakpoints, **solver_kw):
+def _solve_piecewise(rhs, t_end: float, y0, t_eval, breakpoints, max_step: float = np.inf, **solver_kw):
     """
-    What: 在 `breakpoints` 切出的每一段上各自呼叫 `solve_ivp`，以段尾狀態接續下一段；
+    What: 在 `breakpoints` 切出的每一段上各自以 RK45 積分，以段尾狀態接續下一段；
           回傳 (t, y)，與單次 `solve_ivp(t_eval=t_eval)` 的 `sol.t` / `sol.y` 同形狀。
     Why:  注水率在斷點處跳動。單段積分跨過跳點時，步長落在跳點哪一側隨參數極小擾動翻轉，
           χ² 帶 ±0.07–0.17 的路徑噪音；分段後段內 RHS 光滑，噪音降到 ~1e-8，
           rtol 1e-7 的截斷誤差與單段 rtol 1e-10 相當（F13-C）。
           段內把 RHS 的 t 夾在 [a, nextafter(b, a)]：RK45 最後一個 stage 落在 t = b，
           不夾會取到下一段的注水率（`pour_rate` 為右連續）。
+          步長接續：下一段的 `first_step` 取上一段最後的步長提議（段尾那步被截短時取截短前的提議），
+          而不是每段重新估初始步長。`select_initial_step` 對本系統給 ~0.02–0.04 s，
+          段內實際可接受步長多在 0.2–0.5 s；每段重新從小步爬升約多花 2 步 + 1 次估計用 RHS，
+          133 段的 canonical case 因此多 ~25% RHS 呼叫。若接續的步長在跳點後過大，
+          RK45 的誤差控制照常拒絕並縮步，精度契約（rtol/atol）不變。
+          為取得每段最後步長，改用 `RK45` 物件逐步驅動；t_eval 插值語意與 `solve_ivp` 相同
+          （每步以該步 dense output 補出 (t_old, t] 內的 t_eval 點）。
           某段失敗時停止並回傳已完成的部分（與單次 `solve_ivp` 失敗時的行為相同），另發警告。
     """
     edges = [0.0, *(b for b in breakpoints if 0.0 < b < t_end), float(t_end)]
     y = np.asarray(y0, dtype=float)
     ts, ys = [], []
+    h_next = None
     for i, (a, b) in enumerate(zip(edges[:-1], edges[1:])):
         last = i == len(edges) - 2
         m = (t_eval >= a) & ((t_eval <= b) if last else (t_eval < b))
         te = t_eval[m]
-        te_ext = te if (te.size and te[-1] >= b) else np.append(te, b)
         hi = np.nextafter(b, a)
-        seg = solve_ivp(
+        solver = RK45(
             lambda t, yy, a=a, hi=hi: rhs(min(max(t, a), hi), yy),
-            t_span=(a, b), y0=y, t_eval=te_ext, **solver_kw,
+            a, y, b, max_step=max_step,
+            first_step=None if h_next is None else min(h_next, max_step, b - a),
+            **solver_kw,
         )
-        n_keep = min(te.size, seg.t.size)
-        ts.append(seg.t[:n_keep])
-        ys.append(seg.y[:, :n_keep])
-        if not seg.success:
-            warnings.warn(f"ODE 在 [{a:g}, {b:g}] s 段積分失敗（{seg.message}）；結果截斷於 t = {seg.t[-1] if seg.t.size else a:g} s。",
+        j = 0
+        while solver.status == "running":
+            h_proposed = solver.h_abs
+            message = solver.step()
+            if solver.status == "failed":
+                break
+            h_next = solver.h_abs if solver.t < b else h_proposed
+            j_new = np.searchsorted(te, solver.t, side="right")
+            if j_new > j:
+                ts.append(te[j:j_new])
+                ys.append(solver.dense_output()(te[j:j_new]))
+                j = j_new
+        if solver.status == "failed":
+            warnings.warn(f"ODE 在 [{a:g}, {b:g}] s 段積分失敗（{message}）；結果截斷於 t = {solver.t:g} s。",
                           RuntimeWarning, stacklevel=3)
             break
-        y = seg.y[:, -1]
+        y = solver.y
+    if not ts:
+        return np.empty(0), np.empty((y.size, 0))
     return np.concatenate(ts), np.concatenate(ys, axis=1)
 
 
@@ -441,7 +461,7 @@ def simulate_brew(
         y0,
         t_eval,
         protocol.rate_breakpoints(),
-        # RK45 + 加密步長（max_step=0.5）
+        # RK45（固定於 `_solve_piecewise`）+ 加密步長（max_step=0.5）
         # 選用理由（2026-09-24 實測：kinu29 4:11 calibrated、k×4.5、n_eval=1200、
         # t_end=180、max_step=0.5，best-of-3）：
         # - RK45   0.81 s，V_out(180) = 257.6336 mL，水量殘差 3.6e-13 mL（基準）
@@ -452,7 +472,6 @@ def simulate_brew(
         # - h_cap 附近 softplus 梯度 ~1/HEAD_SOFTPLUS_EPS_M = 2000 m⁻¹，
         #   以 max_step = 0.5 s 足以解析。
         # 結論：預設維持 RK45；大規模掃描要換 LSODA 時應先確認該 case 的末值差異。
-        method="RK45",
         rtol=rtol,
         atol=atol,
         max_step=max_step,  # 預設 0.5；fitting 可暫用較粗步長，再以高精度回算 final
