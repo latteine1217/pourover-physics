@@ -926,11 +926,14 @@ def _chi2_evaluate(
     )[fit_mask]
     v_resid = v_pred_obs[fit_mask] - v_out_obs[fit_mask]
     terms["volume"] = float(np.sum((v_resid / sigma_v) ** 2))
+    # 每一項的帶號殘差（Σ r² ≡ 該項）；組成 `residuals` 給 least_squares 型的 stage 使用
+    signed: dict[str, np.ndarray] = {"volume": v_resid / sigma_v}
     n_obs = int(v_resid.size)
 
     # ── 2. 目視停流時刻 ────────────────────────────────────────────────────
     stop_err = float(stop_model_s - case["stop_flow_time_s"])
     terms["stop_time"] = float((stop_err / MEASUREMENT_SIGMA["stop_time_s"]) ** 2)
+    signed["stop_time"] = np.array([stop_err / MEASUREMENT_SIGMA["stop_time_s"]])
     n_obs += 1
 
     # ── 3. 杯溫：同一次沖煮有分享壺溫時序時用時序（F11），否則用單點 ─────
@@ -960,6 +963,7 @@ def _chi2_evaluate(
         temp_err = float(mixed_temp - final_cup_temp_C)
         if not has_server_series:
             terms["cup_temp"] = float((temp_err / MEASUREMENT_SIGMA["cup_temp_C"]) ** 2)
+            signed["cup_temp"] = np.array([temp_err / MEASUREMENT_SIGMA["cup_temp_C"]])
             n_obs += 1
 
     # ── 3b. 分享壺溫 / 出水口溫時序（F11；遮罩見 `_thermal_series_masks`）──────
@@ -972,12 +976,14 @@ def _chi2_evaluate(
         server_series_resid = ts_model - np.asarray(case["server_series_obs_C"], dtype=float)
         terms["server_temp_series"] = float(np.sum(
             (server_series_resid / MEASUREMENT_SIGMA["server_temp_series_C"]) ** 2))
+        signed["server_temp_series"] = server_series_resid / MEASUREMENT_SIGMA["server_temp_series_C"]
         n_obs += int(server_series_resid.size)
     if outflow_series_t.size > 0:
         to_model = np.interp(outflow_series_t, t_sim, np.asarray(obs_layer["T_cup_C"], dtype=float))
         outflow_series_resid = to_model - np.asarray(case["outflow_series_obs_C"], dtype=float)
         terms["outflow_temp_series"] = float(np.sum(
             (outflow_series_resid / MEASUREMENT_SIGMA["outflow_temp_series_C"]) ** 2))
+        signed["outflow_temp_series"] = outflow_series_resid / MEASUREMENT_SIGMA["outflow_temp_series_C"]
         n_obs += int(outflow_series_resid.size)
 
     # ── 4. 溶出質量（TDS × 量測 V_out）────────────────────────────────────
@@ -996,6 +1002,7 @@ def _chi2_evaluate(
         m_ext_obs = float(final_tds_gl_obs) * v_out_obs_L
         sigma_m_ext = MEASUREMENT_SIGMA["tds_gl"] * v_out_obs_L
         terms["extracted_mass"] = float(((m_ext_pred - m_ext_obs) / sigma_m_ext) ** 2)
+        signed["extracted_mass"] = np.array([(m_ext_pred - m_ext_obs) / sigma_m_ext])
         tds_err = float(tds_pred_measured_denom - float(final_tds_gl_obs))
         n_obs += 1
 
@@ -1034,6 +1041,8 @@ def _chi2_evaluate(
     prior_terms["k_beta_psd"] = float(
         ((np.log10(max(params_try.k_beta, 1e-30)) - np.log10(max(anchor, 1e-30))) / sigma_dex) ** 2
     )
+    signed["prior:k_beta_psd"] = np.array(
+        [(np.log10(max(params_try.k_beta, 1e-30)) - np.log10(max(anchor, 1e-30))) / sigma_dex])
     u_liq = getattr(params_try, "U_liquid_dripper_W_m2K", None)
     prior_terms["U_liquid_dripper"] = 0.0
     if u_liq is not None and float(u_liq) > 0.0:
@@ -1041,6 +1050,8 @@ def _chi2_evaluate(
             ((np.log10(float(u_liq)) - np.log10(U_LIQUID_DRIPPER_PRIOR_W_M2K))
              / U_LIQUID_DRIPPER_PRIOR_SIGMA_DEX) ** 2
         )
+        signed["prior:U_liquid_dripper"] = np.array(
+            [(np.log10(float(u_liq)) - np.log10(U_LIQUID_DRIPPER_PRIOR_W_M2K)) / U_LIQUID_DRIPPER_PRIOR_SIGMA_DEX])
     # `tau_lag` 的 prior 項已於 F6b 移除：它自 F6b 起是凍結的 Class B 幾何常數
     # （`TAU_LAG_FIXED_S`），不是自由參數。對凍結值加 prior 只會在每一次
     # evaluate 上加同一個常數（中心 1.0 s vs 凍結值 0.5 s → +1.01），既不是
@@ -1054,12 +1065,15 @@ def _chi2_evaluate(
             ((np.log10(float(n_corey)) - np.log10(SAT_REL_PERM_EXP_PRIOR))
              / SAT_REL_PERM_EXP_PRIOR_SIGMA_DEX) ** 2
         )
+        signed["prior:sat_rel_perm_exp"] = np.array(
+            [(np.log10(float(n_corey)) - np.log10(SAT_REL_PERM_EXP_PRIOR)) / SAT_REL_PERM_EXP_PRIOR_SIGMA_DEX])
     for _name, (_center, _sigma_dex) in EXTRACTION_FIT_PRIORS.items():
         _val = getattr(params_try, _name, None)
         if _val is not None and float(_val) > 0.0:
             prior_terms[f"ext:{_name}"] = float(
                 ((np.log10(float(_val)) - np.log10(_center)) / _sigma_dex) ** 2
             )
+            signed[f"prior:ext:{_name}"] = np.array([(np.log10(float(_val)) - np.log10(_center)) / _sigma_dex])
     chi2 = chi2_data + float(sum(prior_terms.values()))
     # 水力子目標（stage 1/2/4 的最佳化對象）。
     # What：只含水力觀測（V_out 時序、停流）與水力參數的 prior。
@@ -1080,21 +1094,18 @@ def _chi2_evaluate(
         chi2 += CLIP_PENALTY_CHI2
         chi2_hydraulic += CLIP_PENALTY_CHI2
 
-    # 水力子目標的帶號殘差向量：Σ r² ≡ chi2_hydraulic（水力 stage 的 least_squares 吃它）。
+    # 帶號殘差向量：Σ r² ≡ chi2 / chi2_hydraulic（least_squares 型 stage 的輸入）。
     # Why：χ² 本身是加權殘差平方和，給 optimizer 殘差向量才能用 Gauss-Newton 型的
-    #      Jacobian 步；只給純量時 Powell 一次水力 stage 要 ~1200 次模擬。
-    hyd_resid = [v_resid / sigma_v,
-                 [stop_err / MEASUREMENT_SIGMA["stop_time_s"],
-                  (np.log10(max(params_try.k_beta, 1e-30)) - np.log10(max(anchor, 1e-30))) / sigma_dex]]
-    if "sat_rel_perm_exp" in prior_terms:
-        hyd_resid.append([(np.log10(float(n_corey)) - np.log10(SAT_REL_PERM_EXP_PRIOR))
-                          / SAT_REL_PERM_EXP_PRIOR_SIGMA_DEX])
-    if clip_flag:
-        hyd_resid.append([np.sqrt(CLIP_PENALTY_CHI2)])
-    hyd_resid = np.concatenate([np.asarray(r, dtype=float) for r in hyd_resid])
-    # 兩條路徑必須是同一個量；不一致代表有人改了 chi2_hydraulic 的組成卻沒同步這裡
-    if not np.isclose(float(hyd_resid @ hyd_resid), chi2_hydraulic, rtol=1e-12, atol=1e-12):
-        raise RuntimeError(f"水力殘差向量 Σr² = {float(hyd_resid @ hyd_resid)!r} ≠ chi2_hydraulic = {chi2_hydraulic!r}")
+    #      Jacobian 步；只給純量時 Powell 一次水力 stage 要 ~1200 次模擬（EXP-20261005-HYD-LSQ）。
+    clip_resid = [np.array([np.sqrt(CLIP_PENALTY_CHI2)])] if clip_flag else []
+    hyd_resid = np.concatenate([signed[k] for k in
+                                ("volume", "stop_time", "prior:k_beta_psd", "prior:sat_rel_perm_exp")
+                                if k in signed] + clip_resid)
+    all_resid = np.concatenate(list(signed.values()) + clip_resid)
+    # 兩條路徑必須是同一個量；不一致代表有人改了 χ² 的組成卻沒同步這裡
+    for _vec, _target, _label in ((hyd_resid, chi2_hydraulic, "chi2_hydraulic"), (all_resid, chi2, "chi2")):
+        if not np.isclose(float(_vec @ _vec), _target, rtol=1e-12, atol=1e-12):
+            raise RuntimeError(f"殘差向量 Σr² = {float(_vec @ _vec)!r} ≠ {_label} = {_target!r}")
 
     dof = max(n_obs - int(n_fit_params), 1)
     # 白噪音檢定吃標準化殘差（F12a；見 WHITENESS_SUBSET_SIGMA_MAX_ML 的 Why）。
@@ -1109,6 +1120,7 @@ def _chi2_evaluate(
         "chi2": float(chi2),
         "chi2_hydraulic": float(chi2_hydraulic),
         "hydraulic_residuals": hyd_resid,
+        "residuals": all_resid,
         "chi2_data": float(chi2_data),
         "reduced_chi2": float(chi2_data / dof),
         "dof": int(dof),
@@ -1786,7 +1798,7 @@ def fit_k_kbeta_from_flow_profile(
     以 σ 正規化 χ² 為目標，分階段擬合水力 / 熱 / 萃取 closure。
 
     What:
-      stage 1  (log k, log sat_rel_perm_exp, log tau_wet_s) 3D Powell
+      stage 1  (log k, log sat_rel_perm_exp, log tau_wet_s) 3D least_squares（各 stage 共用 `_stage_lsq`）
       stage 2  同上，從 stage 1 的解再收斂一次（不同起點 → 確認 basin）
       stage 4  （選用）`pref_flow_coeff`
       stage 5  熱端單一自由度（F11 起依熱觀測型態分配；舊 stage 6 已不存在）：
@@ -1980,10 +1992,9 @@ def fit_k_kbeta_from_flow_profile(
             stall = " [stall]" if scale > 1.5 else ""
             print(f"  [timer] {name}: wall={wall:.1f}s proc={proc:.1f}s ratio={scale:.2f}{nfev_str}{stall}")
 
-    # ── Stage 1/2：(log k, log k_beta, log tau_lag) 3D Powell ────────────────
-    # ftol 語意：Powell 的 `ftol` 是相對容差，對 χ² ~ 1e3 代表 ~1 的絕對變化。
-    # 我們要的是「Δχ² < 0.05 才算收斂」，因此 options 給一個夠小的相對值，
-    # 再由外層 stage 2 的 Δχ² 檢查確認真的收斂（單一 tolerance 無法表達絕對語意）。
+    # ── Stage 1/2：(log k, log sat_rel_perm_exp, log tau_wet_s) 3D least_squares ──
+    # 收斂由 stage 2 從 stage 1 的解重啟一次、比較兩者 Δχ² < 0.05 確認
+    # （least_squares 的 ftol 是相對 cost 的容差，單一 tolerance 無法表達絕對語意）。
     # tau_wet_s（F2b）只有在 params 帶這個欄位時才進 fit（用 hasattr 防呆）。
     fit_tau_wet = hasattr(params_base, "tau_wet_s")
     hyd_bounds = [
@@ -2006,26 +2017,33 @@ def fit_k_kbeta_from_flow_profile(
     hyd_lo = np.array([b[0] for b in hyd_bounds], dtype=float)
     hyd_hi = np.array([b[1] for b in hyd_bounds], dtype=float)
 
-    def _hyd_lsq(x_start: np.ndarray):
+    def _stage_lsq(resid_fn, x_start, lo, hi, step=None):
         """
-        水力 stage：trust-region reflective 最小平方（log10 空間，帶 bounds）。
+        各 stage 共用的 trust-region reflective 最小平方（帶 bounds）。
 
-        What: 最小化 Σ r²（= `chi2_hydraulic`），Jacobian 以前向差分估計。
+        What: 最小化 Σ r²（`resid_fn` 回傳帶號殘差，Σ r² ≡ 該 stage 的 χ² 目標），
+              Jacobian 以前向差分估計；回傳物件另帶 `chi2 = Σ r²`。
         Why:  χ² 是加權殘差平方和，Gauss-Newton 型方法每次迭代只需 (n+1) 次模擬；
-              Powell 不用殘差結構，canonical 單起點 stage 1 實測 1227 次模擬。
-              差分步長固定為 `HYD_LSQ_DIFF_STEP_DEX`（絕對 dex），遠大於分段積分後
-              χ² 的路徑噪音（~1e-8，F13-C），又遠小於參數 CI 寬度（~0.01–0.3 dex）。
+              Powell 不用殘差結構，canonical 單起點 stage 1 實測 1227 次模擬（EXP-20261005-HYD-LSQ）。
+              `step`：各分量的絕對差分步長；預設 `HYD_LSQ_DIFF_STEP_DEX`（log10 參數），
+              遠大於分段積分後 χ² 的路徑噪音（~1e-8，F13-C），又遠小於參數 CI 寬度（~0.01–0.3 dex）。
         """
-        x_start = np.clip(np.asarray(x_start, dtype=float), hyd_lo, hyd_hi)
-        # scipy 的差分步長為 diff_step·max(1, |x|)；除回去使絕對步長恆為 HYD_LSQ_DIFF_STEP_DEX
-        diff_step = HYD_LSQ_DIFF_STEP_DEX / np.maximum(1.0, np.abs(x_start))
+        lo = np.asarray(lo, dtype=float)
+        hi = np.asarray(hi, dtype=float)
+        x_start = np.clip(np.asarray(x_start, dtype=float), lo, hi)
+        step = np.full(x_start.size, HYD_LSQ_DIFF_STEP_DEX) if step is None else np.asarray(step, dtype=float)
+        # scipy 的差分步長為 diff_step·max(1, |x|)；除回去使絕對步長恆為 `step`
         res = least_squares(
-            _hyd_resid, x_start, bounds=(hyd_lo, hyd_hi), method="trf",
-            diff_step=diff_step, x_scale=1.0,
+            resid_fn, x_start, bounds=(lo, hi), method="trf",
+            diff_step=step / np.maximum(1.0, np.abs(x_start)), x_scale=1.0,
             ftol=HYD_LSQ_FTOL, xtol=HYD_LSQ_XTOL, gtol=HYD_LSQ_GTOL, max_nfev=HYD_LSQ_MAX_NFEV,
         )
         res.chi2 = float(2.0 * res.cost)   # least_squares 的 cost = ½ Σ r²
         return res
+
+    def _hyd_lsq(x_start: np.ndarray):
+        """水力 stage 1/2：在 (log k, log n, log tau_wet) 上最小化 `chi2_hydraulic`。"""
+        return _stage_lsq(_hyd_resid, x_start, hyd_lo, hyd_hi)
 
     x0 = [
         np.log10(np.clip(params_base.k, *K_BOUNDS_M2)),
@@ -2068,20 +2086,16 @@ def fit_k_kbeta_from_flow_profile(
         t0 = _stage_start()
         pref_off = _evaluate(params_fit, tau_lag_fit, coarse=True)
 
-        def _pref_chi2(log_x: np.ndarray) -> float:
+        def _pref_resid(log_x: np.ndarray) -> np.ndarray:
             p = dataclasses.replace(
                 params_fit,
                 pref_flow_coeff=float(10.0 ** log_x[0]),
                 pref_flow_open_rate=float(pref_open_rate_fixed),
                 pref_flow_tau_decay=float(pref_tau_decay_fixed),
             )
-            return float(_evaluate(p, tau_lag_fit, coarse=True)["chi2_hydraulic"])
+            return np.asarray(_evaluate(p, tau_lag_fit, coarse=True)["hydraulic_residuals"], dtype=float)
 
-        res_pref = minimize(
-            _pref_chi2, np.array([np.log10(5.0e-5)]), method="Powell",
-            bounds=[(np.log10(5.0e-6), np.log10(5.0e-4))],
-            options={"xtol": 1e-3, "ftol": 1e-5, "maxiter": 110, "disp": False},
-        )
+        res_pref = _stage_lsq(_pref_resid, [np.log10(5.0e-5)], [np.log10(5.0e-6)], [np.log10(5.0e-4)])
         params_pref = dataclasses.replace(
             params_fit,
             pref_flow_coeff=float(10.0 ** res_pref.x[0]),
@@ -2095,12 +2109,12 @@ def fit_k_kbeta_from_flow_profile(
         if verbose:
             print(f"  [stage4] Δχ²_hyd={pref_new['chi2_hydraulic'] - pref_off['chi2_hydraulic']:+.2f} "
                   f"→ {'accept' if res_stage4 is not None else 'reject'}")
-        _stage_end("stage4_pref", t0, nfev=getattr(res_pref, "nfev", None))
+        _stage_end("stage4_pref", t0, nfev=_lsq_nsim(res_pref))
 
     # ── Stage 5：熱端（F11：自由度依觀測而定）──────────────────────────────
     # What: 只有單點杯溫（紀錄表 case）→ 1D `lambda_server_ambient`（F6d 行為，逐位元不變）；
     #       有分享壺溫時序（影片 case）→ `THERMAL_SERIES_FIT_PARAMS`（log 空間聯擬）。
-    #       seed 網格取各參數 `THERMAL_FIT_SEEDS` 的笛卡兒積，Powell 從最佳 seed 出發。
+    #       seed 網格取各參數 `THERMAL_FIT_SEEDS` 的笛卡兒積，least_squares 從最佳 seed 出發。
     # Why:  F6d：一個終點杯溫只撐得起一個熱端自由度（U 的 CI None/None）。F11 的時序
     #       identifiability（canonical，時序 loss）決定哪些參數可進 fit，見
     #       `THERMAL_SERIES_FIT_PARAMS` 的 Why。
@@ -2117,8 +2131,8 @@ def fit_k_kbeta_from_flow_profile(
             return dataclasses.replace(
                 params_fit, **{n: float(10.0 ** vals[j]) for j, n in enumerate(thermal_names)})
 
-        def _thermal_chi2(log_x: np.ndarray) -> float:
-            return float(_evaluate(_thermal_params(log_x), tau_lag_fit, coarse=True)["chi2"])
+        def _thermal_resid(log_x: np.ndarray) -> np.ndarray:
+            return np.asarray(_evaluate(_thermal_params(log_x), tau_lag_fit, coarse=True)["residuals"], dtype=float)
 
         # seed 只決定起點量級；接受與否由 Δχ² 統一把關。
         seed_vals, seed_chi2 = None, float("inf")
@@ -2130,16 +2144,13 @@ def fit_k_kbeta_from_flow_profile(
                 seed_chi2, seed_vals = c, combo
 
         x0_thermal = np.array([np.log10(np.clip(v, *bd)) for v, bd in zip(seed_vals, th_bounds)])
-        res_thermal = minimize(
-            _thermal_chi2,
-            x0_thermal,
-            method="Powell",
-            bounds=[(np.log10(lo), np.log10(hi)) for lo, hi in th_bounds],
-            options={"xtol": 1e-3, "ftol": 1e-5, "maxiter": 150, "disp": False},
+        res_thermal = _stage_lsq(
+            _thermal_resid, x0_thermal,
+            [np.log10(lo) for lo, _ in th_bounds], [np.log10(hi) for _, hi in th_bounds],
         )
 
         # ── 候選點擇優（F6 修正，取代「只看 Powell 回傳點」）────────────────
-        # What: 在 {seed 網格最佳點, Powell 回傳點} 之中取 χ² 最低者，
+        # What: 在 {seed 網格最佳點, optimizer 回傳點} 之中取 χ² 最低者，
         #       再交給統一的 Δχ² 守門（對照 stage 進入點）。
         # Why:  實測（F6 task 1，kinu29 4:11 的 4D 參考解）scipy 的 bounded Powell
         #       在 nit=1、status=0「成功收斂」的情況下回傳了比自己起點**高 3.10**
@@ -2150,7 +2161,7 @@ def fit_k_kbeta_from_flow_profile(
         #       記錄的 Δχ² = +19.30 的來源。取候選最小值後，這一步在結構上
         #       不可能讓 χ² 上升。
         cand: list[tuple[str, V60Params, dict]] = []
-        for tag, lx in (("seed", x0_thermal), ("powell", np.asarray(res_thermal.x, dtype=float))):
+        for tag, lx in (("seed", x0_thermal), ("lsq", np.asarray(res_thermal.x, dtype=float))):
             pp = _thermal_params(lx)
             cand.append((tag, pp, _evaluate(pp, tau_lag_fit, coarse=True)))
         best_tag, params_thermal, thermal_new = min(cand, key=lambda c: c[2]["chi2"])
@@ -2162,10 +2173,10 @@ def fit_k_kbeta_from_flow_profile(
             print(f"  [stage5] live {','.join(thermal_names)}: "
                   f"U={params_thermal.U_liquid_dripper_W_m2K:.1f} W/m²K{u_tag}, "
                   f"λ_srv={params_thermal.lambda_server_ambient:.2e} (from {best_tag}; "
-                  f"powell Δ vs seed = {cand[1][2]['chi2'] - cand[0][2]['chi2']:+.2f}), "
+                  f"lsq Δ vs seed = {cand[1][2]['chi2'] - cand[0][2]['chi2']:+.2f}), "
                   f"Δχ²={thermal_new['chi2'] - thermal_off['chi2']:+.2f} "
                   f"→ {'accept' if res_stage5 is not None else 'reject'}")
-        _stage_end("stage5_thermal", t0, nfev=getattr(res_thermal, "nfev", None))
+        _stage_end("stage5_thermal", t0, nfev=_lsq_nsim(res_thermal))
 
     # ── Stage 7：萃取（由 EXTRACTION_FIT_PARAMS 驅動）────────────────────────
     # 三道前置條件，任何一道不過就跳過並記錄原因（不靜默略過）：
@@ -2216,14 +2227,14 @@ def fit_k_kbeta_from_flow_profile(
                     kw[name] = float(np.clip(v, lo, hi))
                 return dataclasses.replace(params_fit, **kw)
 
-            def _ext_chi2(x: np.ndarray) -> float:
-                return float(_evaluate(_ext_params(x), tau_lag_fit, coarse=True)["chi2"])
+            def _ext_resid(x: np.ndarray) -> np.ndarray:
+                return np.asarray(_evaluate(_ext_params(x), tau_lag_fit, coarse=True)["residuals"], dtype=float)
 
-            res_ext = minimize(
-                _ext_chi2, np.asarray(x0_ext, dtype=float), method="Powell",
-                bounds=bounds_ext,
-                options={"xtol": 1e-3, "ftol": 1e-5, "maxiter": 100, "disp": False},
-            )
+            # log10 參數用絕對 dex 步長；線性參數改用相對步長（同一個 1e-3）
+            ext_step = [HYD_LSQ_DIFF_STEP_DEX if tr == "log10" else HYD_LSQ_DIFF_STEP_DEX * max(abs(x), 1e-12)
+                        for (_, tr, _, _), x in zip(stage7_specs, x0_ext)]
+            res_ext = _stage_lsq(
+                _ext_resid, x0_ext, [b[0] for b in bounds_ext], [b[1] for b in bounds_ext], step=ext_step)
             params_ext = _ext_params(np.atleast_1d(np.asarray(res_ext.x, dtype=float)))
             ext_new = _evaluate(params_ext, tau_lag_fit, coarse=True)
             if _accept(ext_new, ext_off_scalar):
@@ -2234,7 +2245,7 @@ def fit_k_kbeta_from_flow_profile(
             if verbose:
                 print(f"  [stage7] Δχ²={ext_new['chi2'] - ext_off_scalar['chi2']:+.2f} "
                       f"→ {'accept' if res_stage7 is not None else 'reject'}")
-        _stage_end("stage7_extraction", t0, nfev=getattr(res_stage7, "nfev", None) if res_stage7 else None)
+        _stage_end("stage7_extraction", t0, nfev=_lsq_nsim(res_stage7) if res_stage7 else None)
 
     # ── Final：fine solver 重算 ─────────────────────────────────────────────
     t0 = _stage_start()
@@ -2952,12 +2963,11 @@ def _sibling_summary_row(csv_path: str | Path) -> dict | None:
 # ── multi-start 設計（F6b）──────────────────────────────────────────────────
 # What: stage 1/2 的三個 live 參數 (k, sat_rel_perm_exp, tau_wet_s) 上的 Latin
 #       hypercube 起點數與亂數種子。
-# Why:  F6 §4.4 實測同一個 case 的兩組起點分別收在 χ² 816.9 與 719.1（差 97.8，
-#       ≈ 13.6 reduced χ² 單位），而各組**內部** spread 只有 ~2%。也就是說
-#       χ² surface 至少有兩個明顯分離的 basin，3 個起點的「deterministic basin
-#       選擇」承諾沒有兌現。改用固定 seed 的 LHS：起點在每個維度上分層均勻，
-#       且完全可重現（換句話說，這不是「多跑幾次碰運氣」，是一個可重跑的設計）。
-MULTI_START_LHS_N = 6
+# Why:  固定 seed 的 LHS：起點在每個維度上分層均勻，且完全可重現（F6b）。
+#       起點數 2（+ sibling warm-start = 3）：水力 stage 改為 least_squares 後，四案 7 起點
+#       全部收斂到同一點（χ² span ≤ 0.006，EXP-20261005-HYD-LSQ）；F6 §4.4 與 F12c/F13 記錄的
+#       分離 basin 經查是 Powell 未收斂。保留多起點作為非單峰的偵測器，不再靠數量覆蓋 basin。
+MULTI_START_LHS_N = 2
 MULTI_START_SEED = 20260924
 # LHS 取樣區間（k 與 sat_rel_perm_exp 走 log10、tau_wet 走線性）。
 # 刻意**窄於** optimizer bounds：起點不需要覆蓋到邊界，覆蓋到邊界只會浪費
@@ -2971,7 +2981,7 @@ def _latin_hypercube_starts(n: int, seed: int) -> list[V60Params]:
     在 (log k, log sat_rel_perm_exp, tau_wet_s) 上取 n 個 Latin hypercube 起點。
 
     What: 每個維度切成 n 個等寬層，各層取一個亂數點後獨立打亂配對。
-    Why:  純隨機取樣在 n = 6 時很容易在某個維度上擠成一團；LHS 保證每個維度
+    Why:  純隨機取樣在 n 小時很容易在某個維度上擠成一團；LHS 保證每個維度
           的邊際分布一定是分層均勻的，這正是我們要的「起點真的分散」。
           seed 固定 → 同一份程式碼永遠得到同一組起點，結果可重跑。
     """

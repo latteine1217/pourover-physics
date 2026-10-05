@@ -470,7 +470,7 @@ class TestF6bDofReallocation(unittest.TestCase):
                                             fitting.MULTI_START_SEED)
         b = fitting._latin_hypercube_starts(fitting.MULTI_START_LHS_N,
                                             fitting.MULTI_START_SEED)
-        self.assertEqual(fitting.MULTI_START_LHS_N, 6)
+        self.assertEqual(fitting.MULTI_START_LHS_N, 2)
         self.assertEqual([p.k for p in a], [p.k for p in b])
         self.assertEqual([p.sat_rel_perm_exp for p in a], [p.sat_rel_perm_exp for p in b])
         for p in a:
@@ -480,7 +480,8 @@ class TestF6bDofReallocation(unittest.TestCase):
             self.assertLessEqual(p.sat_rel_perm_exp, fitting.SAT_REL_PERM_EXP_BOUNDS[1])
             self.assertGreaterEqual(p.tau_wet_s, fitting.MULTI_START_TAU_WET_RANGE_S[0])
             self.assertLessEqual(p.tau_wet_s, fitting.MULTI_START_TAU_WET_RANGE_S[1])
-        # 分層性質：每個維度的 6 個值必須落在 6 個不同的六分位層裡
+        # 分層性質：每個維度的 n 個值必須落在 n 個不同的等寬層裡
+        n = fitting.MULTI_START_LHS_N
         for lo, hi, vals, logspace in (
             (*fitting.MULTI_START_K_RANGE_M2, [p.k for p in a], True),
             (*fitting.SAT_REL_PERM_EXP_BOUNDS, [p.sat_rel_perm_exp for p in a], True),
@@ -491,7 +492,7 @@ class TestF6bDofReallocation(unittest.TestCase):
                      for v in vals]
             else:
                 u = [(v - lo) / (hi - lo) for v in vals]
-            self.assertEqual(sorted(min(int(x * 6), 5) for x in u), list(range(6)))
+            self.assertEqual(sorted(min(int(x * n), n - 1) for x in u), list(range(n)))
 
     def test_sat_rel_perm_exp_is_in_cache_key(self):
         """
