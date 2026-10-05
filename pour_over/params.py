@@ -18,6 +18,7 @@ Why:
 
 import csv
 import dataclasses
+import math
 from pathlib import Path
 
 import numpy as np
@@ -84,9 +85,58 @@ def smooth_min(a, b, eps: float):
           交叉處製造斜率不連續，讓 RK45 反覆縮步。eps 遠離交叉處無影響，
           僅在交叉鄰域把折角磨圓。
     """
-    diff = np.asarray(a, dtype=float) - np.asarray(b, dtype=float)
-    return 0.5 * (np.asarray(a, dtype=float) + np.asarray(b, dtype=float)
-                  - np.sqrt(diff * diff + eps * eps))
+    a = _as_float(a)
+    b = _as_float(b)
+    diff = a - b
+    return 0.5 * (a + b - np.sqrt(diff * diff + eps * eps))
+
+
+# ── 純量快速路徑的共用夾值工具（RHS 常數開銷）─────────────────────────────────
+# What: 下列 closure 同時服務 ODE RHS（Python 純量）與後處理（整條時序陣列）。
+# Why:  RHS 每次呼叫 ~50 次純量 np.clip / np.asarray，每次 ~1–2 µs 的 ufunc 派送
+#       開銷佔 RHS 時間兩成以上。純量走 `min(max(x, lo), hi)` 與 np.clip 逐位元相同
+#       （皆為單純比較；x 為 NaN 時兩者都回傳 NaN），陣列仍交給 numpy。
+def _as_float(x):
+    """Python / NumPy 浮點純量原樣回傳；其餘轉成 float ndarray（等同 `np.asarray(x, dtype=float)`）。"""
+    return x if isinstance(x, float) else np.asarray(x, dtype=float)
+
+
+def _clip(x, lo, hi):
+    """與 `np.clip(x, lo, hi)` 數值相同；浮點純量回傳 Python 純量，陣列回傳 ndarray。"""
+    if isinstance(x, float):
+        return min(max(x, lo), hi)
+    return np.clip(x, lo, hi)
+
+
+def _floor(x, lo):
+    """與 `np.maximum(x, lo)` 數值相同（x 為 NaN 時回傳 NaN）；浮點純量回傳 Python 純量。"""
+    if isinstance(x, float):
+        return max(x, lo)
+    return np.maximum(x, lo)
+
+
+def _scalar_out(x):
+    """`float(x) if np.ndim(x) == 0 else x`；Python float 直接回傳，省去 np.ndim 派送。"""
+    if type(x) is float:
+        return x
+    return float(x) if np.ndim(x) == 0 else x
+
+
+def _finite_or_zero(x) -> float:
+    """純量版 `float(np.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0))`。"""
+    x = float(x)
+    return x if math.isfinite(x) else 0.0
+
+
+def _polyval(coeffs, x):
+    """
+    What: Horner 求值，與 `np.polyval(coeffs, x)` 逐位元相同（同為 `y = y·x + c`、y 由 0 起算）。
+    Why:  `np.polyval` 每次都 asarray 係數並配置 zeros_like，純量呼叫的開銷遠大於 4 次乘加。
+    """
+    y = 0.0
+    for c in coeffs:
+        y = y * x + c
+    return y
 
 
 def _setup_cjk_font() -> None:
@@ -1274,8 +1324,8 @@ class V60Params(V60Constant):
             用總滯留水（含床頂積水）而非床內液量，是為了避免 t = 0 的死結：
             床內液量為 0 → w = 0 → 容量為 0 → 床內液量永遠是 0。
         """
-        w_c = float(np.clip(w, 0.0, 1.0))
-        x = float(np.clip(max(float(V_retained), 0.0) / max(self._V_dry, 1e-12), 0.0, 1.0))
+        w_c = _clip(float(w), 0.0, 1.0)
+        x = _clip(max(float(V_retained), 0.0) / max(self._V_dry, 1e-12), 0.0, 1.0)
         contact = x * x * (3.0 - 2.0 * x)
         return contact * (1.0 - w_c) / max(float(self.tau_wet_s), 1e-6)
 
@@ -1291,15 +1341,15 @@ class V60Params(V60Constant):
               上方自排。這條式子讓 h_cap_bed 從「診斷量」變回主方程裡的物理量，
               且在兩個 regime 之間連續，不需要分支。
         """
-        return float(np.clip(self.h_cap_bed(T_K) / max(self.h_bed, 1e-12), 0.0, 1.0))
+        return float(_clip(self.h_cap_bed(T_K) / max(self.h_bed, 1e-12), 0.0, 1.0))
 
     def immobile_capacity(self, w: float, T_K=None) -> float:
         """毛細保水（immobile）水池的上限 [m³]：φ·V_bed · f_retain(T) · w。"""
-        return self.V_liquid * self.bed_retention_fraction(T_K) * float(np.clip(w, 0.0, 1.0))
+        return self.V_liquid * self.bed_retention_fraction(T_K) * _clip(float(w), 0.0, 1.0)
 
     def absorb_capacity(self, w: float) -> float:
         """顆粒吸收水池的上限 [m³]：V_full · w（潤濕/溶脹尚未完成時吸不滿）。"""
-        return self._V_full * float(np.clip(w, 0.0, 1.0))
+        return self._V_full * _clip(float(w), 0.0, 1.0)
 
     def mobile_capacity(self, V_imm: float) -> float:
         """mobile 孔隙水的可用空間 [m³]：φ·V_bed − V_imm（兩池共用同一孔隙體積）。"""
@@ -1315,10 +1365,9 @@ class V60Params(V60Constant):
               只是 S_r 不再是常數，而是由 `V_imm` 顯式攜帶的時序量。
               因此 `sat_rel_perm_residual` 必須是 0，否則同一份保水被記兩次。
         """
-        cap = np.maximum(self.V_liquid - np.maximum(np.asarray(V_imm, dtype=float), 0.0),
-                         1e-3 * self.V_liquid)
-        s = np.clip(np.maximum(np.asarray(V_mob, dtype=float), 0.0) / cap, 0.0, 1.0)
-        return float(s) if np.ndim(s) == 0 else s
+        cap = _floor(self.V_liquid - _floor(_as_float(V_imm), 0.0), 1e-3 * self.V_liquid)
+        s = _clip(_floor(_as_float(V_mob), 0.0) / cap, 0.0, 1.0)
+        return _scalar_out(s)
 
     def absorption_rate(self, V_abs: float, w: float, Q_in: float, V_free: float, V_mob: float, T_K: float):
         """
@@ -1431,14 +1480,14 @@ class V60Params(V60Constant):
         """
         if T_K is None:
             T_K = self.T_brew
-        h_free_arr = np.maximum(np.asarray(h_free, dtype=float), 0.0)
-        T_arr = np.asarray(T_K, dtype=float)
-        t_arr = np.asarray(t_sec, dtype=float)
+        h_free_arr = _floor(_as_float(h_free), 0.0)
+        T_arr = _as_float(T_K)
+        t_arr = _as_float(t_sec)
         if sat is None:
             s_mob = np.zeros_like(h_free_arr, dtype=float)
         else:
-            s_mob = np.clip(np.asarray(sat, dtype=float), 0.0, 1.0)
-        wet_gate = np.clip((s_mob - 0.85) / 0.15, 0.0, 1.0)
+            s_mob = _clip(_as_float(sat), 0.0, 1.0)
+        wet_gate = _clip((s_mob - 0.85) / 0.15, 0.0, 1.0)
 
         h_threshold = self.h_cap + self.h_gas(t_arr)
         # 濕床毛細驅動頭：正比於床層已建立連通液相的比例（S_mob），
@@ -1455,13 +1504,13 @@ class V60Params(V60Constant):
         eps = HEAD_SOFTPLUS_EPS_M
         h_eff = eps * np.logaddexp(0.0, raw_head / eps)
         return {
-            "wet_gate": float(wet_gate) if np.ndim(wet_gate) == 0 else wet_gate,
-            "h_threshold": float(h_threshold) if np.ndim(h_threshold) == 0 else h_threshold,
-            "h_threshold_eff": float(h_threshold_eff) if np.ndim(h_threshold_eff) == 0 else h_threshold_eff,
-            "h_cap_wet": float(h_cap_wet) if np.ndim(h_cap_wet) == 0 else h_cap_wet,
-            "h_bed_drive": float(h_bed_drive) if np.ndim(h_bed_drive) == 0 else h_bed_drive,
-            "raw_head": float(raw_head) if np.ndim(raw_head) == 0 else raw_head,
-            "h_eff": float(h_eff) if np.ndim(h_eff) == 0 else h_eff,
+            "wet_gate": _scalar_out(wet_gate),
+            "h_threshold": _scalar_out(h_threshold),
+            "h_threshold_eff": _scalar_out(h_threshold_eff),
+            "h_cap_wet": _scalar_out(h_cap_wet),
+            "h_bed_drive": _scalar_out(h_bed_drive),
+            "raw_head": _scalar_out(raw_head),
+            "h_eff": _scalar_out(h_eff),
         }
 
     def bed_drive_head(self, h_free, T_K=None, t_sec: float = 0.0, sat=None):
@@ -1476,7 +1525,7 @@ class V60Params(V60Constant):
         """
         comps = self.bed_drive_components(h_free, T_K=T_K, t_sec=t_sec, sat=sat)
         h_eff = comps["h_eff"]
-        return float(h_eff) if np.ndim(h_eff) == 0 else h_eff
+        return _scalar_out(h_eff)
 
     def relative_permeability(self, sat):
         """
@@ -1495,15 +1544,15 @@ class V60Params(V60Constant):
             佔著孔隙卻不導流，用總飽和度會把「床內水多」誤讀成「導水能力強」。
             這也是 F2 §6 兩條失敗路徑的共同根因。
         """
-        sat_arr = np.clip(np.asarray(sat, dtype=float), 0.0, 1.0)
-        s_r = np.clip(float(self.sat_rel_perm_residual), 0.0, 0.95)
+        sat_arr = _clip(_as_float(sat), 0.0, 1.0)
+        s_r = _clip(float(self.sat_rel_perm_residual), 0.0, 0.95)
         if s_r >= 0.999:
             kr = np.zeros_like(sat_arr, dtype=float)
             return float(kr) if kr.ndim == 0 else kr
-        s_e = np.clip((sat_arr - s_r) / max(1.0 - s_r, 1e-12), 0.0, 1.0)
+        s_e = _clip((sat_arr - s_r) / max(1.0 - s_r, 1e-12), 0.0, 1.0)
         s_smooth = s_e * s_e * (3.0 - 2.0 * s_e)
-        kr = np.clip(s_smooth ** max(float(self.sat_rel_perm_exp), 1.0), 0.0, 1.0)
-        return float(kr) if kr.ndim == 0 else kr
+        kr = _clip(s_smooth ** max(float(self.sat_rel_perm_exp), 1.0), 0.0, 1.0)
+        return _scalar_out(kr)
 
     def sigma_water(self, T_K: float) -> float:
         """
@@ -1518,8 +1567,8 @@ class V60Params(V60Constant):
         sigma_ref = 0.060  # 93°C 附近表面張力量級
         slope = -1.5e-4    # dσ/dT < 0：溫度升高時表面張力下降
         # np.maximum（而非 max）：`h_cap_bed` 在後處理會餵整條 T_K 時序進來
-        sigma = np.maximum(1e-3, sigma_ref + slope * (np.asarray(T_K, dtype=float) - self.T_ref))
-        return float(sigma) if np.ndim(sigma) == 0 else sigma
+        sigma = _floor(sigma_ref + slope * (_as_float(T_K) - self.T_ref), 1e-3)
+        return _scalar_out(sigma)
 
     def tau_cap_T(self, T_K: float) -> float:
         """
@@ -1547,7 +1596,7 @@ class V60Params(V60Constant):
              但床層一旦完成浸濕，毛細傳輸改以 Darcy 型係數描述，
              並依圖使用線性溫度關係，而不是 sqrt(t) 前沿律。
         """
-        T_C = np.clip(T_K - 273.15, 0.0, 100.0)
+        T_C = _clip(T_K - 273.15, 0.0, 100.0)
         return self.darcy_capillary_c0 + self.darcy_capillary_c1 * T_C
 
     def h_gas(self, t_sec: float) -> float:
@@ -1597,10 +1646,10 @@ class V60Params(V60Constant):
         Why:  儲水方程改以體積為狀態後，水位變成後處理量；
               解析反解比 Newton 迭代便宜且在 V_free → 0 時仍精確。
         """
-        V = np.maximum(np.asarray(V_free, dtype=float), 0.0)
+        V = _floor(_as_float(V_free), 0.0)
         h_total = ((V + self.V_bed) * 3.0 / (np.pi * self._tan2)) ** (1.0 / 3.0)
-        h_free = np.maximum(h_total - self.h_bed, 0.0)
-        return float(h_free) if np.ndim(h_free) == 0 else h_free
+        h_free = _floor(h_total - self.h_bed, 0.0)
+        return _scalar_out(h_free)
 
     def wetted_height(self, S_bed, h_free):
         """
@@ -1616,10 +1665,10 @@ class V60Params(V60Constant):
               而不是真值 66.7 mm）。相加形式在 S_bed → 1 時給出 h_bed + h_free，
               在無積水時給出純潤濕前沿，兩端都正確且處處連續。
         """
-        S = np.clip(np.asarray(S_bed, dtype=float), 0.0, 1.0)
-        hf = np.maximum(np.asarray(h_free, dtype=float), 0.0)
+        S = _clip(_as_float(S_bed), 0.0, 1.0)
+        hf = _floor(_as_float(h_free), 0.0)
         h = self.h_bed * S ** (1.0 / 3.0) + hf
-        return float(h) if np.ndim(h) == 0 else h
+        return _scalar_out(h)
 
     def wetted_area(self, h_total):
         """
@@ -1629,10 +1678,10 @@ class V60Params(V60Constant):
         Why:  濾杯熱交換是界面現象；把面積顯式寫出來，界面熱傳係數 U 才有
               可辯護的物理區間，不必吞掉幾何隨時間的變化。
         """
-        h = np.maximum(np.asarray(h_total, dtype=float), 0.0)
+        h = _floor(_as_float(h_total), 0.0)
         cos_theta = np.cos(np.radians(self.half_angle_deg))
         a = np.pi * (self._tan / max(cos_theta, 1e-12)) * h ** 2
-        return float(a) if np.ndim(a) == 0 else a
+        return _scalar_out(a)
 
     # ── 修正 [3][8] 有效滲透率（細粉遷移 × 顆粒溶脹）────────────────────────
     def phi_effective(self, sat: float = 1.0, h_free: float | None = None):
@@ -1651,7 +1700,7 @@ class V60Params(V60Constant):
         """
         phi_sw = self.phi - self.delta_phi * sat
         if h_free is not None:
-            head_ratio = np.clip(max(float(h_free), 0.0) / max(self.h_bed, 1e-12), 0.0, 1.0)
+            head_ratio = _clip(max(float(h_free), 0.0) / max(self.h_bed, 1e-12), 0.0, 1.0)
             phi_sw -= self.delta_phi_pressure * head_ratio
         return max(phi_sw, 1e-3 * self.phi)
 
@@ -1822,8 +1871,8 @@ class V60Params(V60Constant):
             return 1.0
 
         h_drive = max(float(h_free), 0.0)
-        u_pos = max(float(np.nan_to_num(u_pore, nan=0.0, posinf=0.0, neginf=0.0)), 0.0)
-        q_pos = max(float(np.nan_to_num(q_in, nan=0.0, posinf=0.0, neginf=0.0)), 0.0)
+        u_pos = max(_finite_or_zero(u_pore), 0.0)
+        q_pos = max(_finite_or_zero(q_in), 0.0)
 
         S_u = u_pos / (u_pos + self.wetbed_rev_u_half)
         # 可逆壓實由床頂的額外壓差驅動，因此用自由水柱 h_free。
@@ -1832,14 +1881,14 @@ class V60Params(V60Constant):
         S_h = h_drive / (h_drive + self.wetbed_rev_h_half)
         f_rev = 1.0 / (1.0 + self.wetbed_rev_gain * S_u * S_h)
 
-        J_post = np.clip(q_pos / self.wetbed_irr_qin_ref, 0.0, 1.0) \
-               * np.clip(u_pos / self.wetbed_irr_u_ref, 0.0, 1.0)
+        J_post = _clip(q_pos / self.wetbed_irr_qin_ref, 0.0, 1.0) \
+               * _clip(u_pos / self.wetbed_irr_u_ref, 0.0, 1.0)
         f_irr = 1.0 / (1.0 + self.wetbed_irr_gain * J_post)
 
         f_mix = f_rev * f_irr
         # gate=0 → 1；gate=1 → f_mix
         f_gate = 1.0 - gate * (1.0 - f_mix)
-        return float(np.clip(f_gate, 0.2, 1.0))
+        return float(_clip(f_gate, 0.2, 1.0))
 
     # NOTE: 已刪除 `d_wetbed_struct_dt` / `wetbed_struct_factor` /
     # `wetbed_struct_throat_term`（P0/P1 refactor）。
@@ -1883,10 +1932,10 @@ class V60Params(V60Constant):
         if gate <= 1e-6:
             return 0.0
 
-        xi = float(np.clip(pref_state, 0.0, 1.0))
-        q_pos = max(float(np.nan_to_num(q_in, nan=0.0, posinf=0.0, neginf=0.0)), 0.0)
+        xi = _clip(float(pref_state), 0.0, 1.0)
+        q_pos = max(_finite_or_zero(q_in), 0.0)
         S_q = q_pos / (q_pos + self.pref_flow_qin_half)
-        S_impact = np.clip(pour_impact, 0.0, 1.0)
+        S_impact = _clip(float(pour_impact), 0.0, 1.0)
         build = gate * self.pref_flow_open_rate * S_impact * S_q * (1.0 - xi)
         decay = gate * xi / max(self.pref_flow_tau_decay, 1e-6)
         return build - decay
@@ -1915,7 +1964,7 @@ class V60Params(V60Constant):
         if coeff <= 0.0:
             base = np.asarray(h_free, dtype=float)
             zeros = np.zeros_like(base, dtype=float)
-            return float(zeros) if np.ndim(zeros) == 0 else zeros
+            return _scalar_out(zeros)
 
         xi_arr = np.clip(np.asarray(pref_state, dtype=float), 0.0, 1.0)
         gate = self.post_bloom_gate(t_sec, bloom_end_s)
@@ -1931,7 +1980,7 @@ class V60Params(V60Constant):
         h_eff = self.bed_drive_head(h_free, T_K=T_K, t_sec=t_sec, sat=sat)
         q_pref = coeff * gate * wet_gate * kr_sat * xi_arr * h_eff * mu_scale
         q_pref = np.maximum(q_pref, 0.0)
-        return float(q_pref) if np.ndim(q_pref) == 0 else q_pref
+        return _scalar_out(q_pref)
 
     def throat_relief_factor(
         self,
@@ -1951,9 +2000,9 @@ class V60Params(V60Constant):
             因此只削減 throat 額外阻塞，不碰 deposition。
         """
         gate = self.post_bloom_gate(t_sec, bloom_end_s)
-        impact = float(np.clip(pour_impact, 0.0, 1.0))
+        impact = _clip(float(pour_impact), 0.0, 1.0)
         relief = 1.0 - gate * self.throat_relief_gain * impact
-        return float(np.clip(relief, 0.25, 1.0))
+        return float(_clip(relief, 0.25, 1.0))
 
     def k_eff(
         self,
@@ -1965,6 +2014,7 @@ class V60Params(V60Constant):
         t_sec: float = 0.0,
         bloom_end_s: float | None = None,
         pour_impact: float = 0.0,
+        clog_terms: tuple[float, float] | None = None,
     ):
         """
         綜合有效滲透率：喉道阻塞 + bloom 後濕床重排 + 沉積（全部加性阻力）× 顆粒溶脹（Kozeny-Carman）
@@ -1994,9 +2044,14 @@ class V60Params(V60Constant):
              注意：此次改動會再次偏移 k / k_beta / wetbed_irr_gain / wetbed_rev_gain
                   的校準值，需重新 measured fit。
 
+        `clog_terms`（內部用）：預先算好的 `k_beta_components(V_out)`。
+            同一時刻以不同 (q_in, u_pore) 重算 k_eff 時共用，免得重做 bin 加總。
+
         TODO: 加入攪動項：dk/dt = -beta_agit·Q_in·k（高 Q_in 時細粉遷移更快）
         """
-        throat_term, deposition_term = self.k_beta_components(V_out)
+        if clog_terms is None:
+            clog_terms = self.k_beta_components(V_out)
+        throat_term, deposition_term = clog_terms
         throat_relief = self.throat_relief_factor(pour_impact, t_sec, bloom_end_s)
         throat_eff = 1.0 + (throat_term - 1.0) * throat_relief
         phi_sw = self.phi_effective(sat, h_free)
@@ -2035,12 +2090,26 @@ class V60Params(V60Constant):
         Why:
           使用者指定要以附圖為準，而不是直接套 Andrade 理論式。
           這讓模型中的流速溫度效應直接對齊圖上的經驗曲線。
+
+        純量單筆快取（What / Why）:
+          ODE RHS 在同一個 T 下會經由 τ_cap、q_extract、q_bypass、λ_fast/slow 呼叫本式
+          約 7 次。快取鍵包含本式的全部輸入（T_K、mu、T_ref、係數），任何一個改變都
+          重新計算，因此只是純函數的記憶，不會在原地改參數後回傳過期值。
         """
-        T_C = np.clip(T_K - 273.15, 0.0, 100.0)
+        scalar = isinstance(T_K, float)
+        if scalar:
+            key = (T_K, self.mu, self.T_ref, tuple(self.mu_fit_log_coeffs))
+            memo = self.__dict__.get("_mu_water_memo")
+            if memo is not None and memo[0] == key:
+                return memo[1]
+        T_C = _clip(T_K - 273.15, 0.0, 100.0)
         T_ref_C = self.T_ref - 273.15
-        mu_rel = np.exp(np.polyval(self.mu_fit_log_coeffs, T_C))
-        mu_rel_ref = np.exp(np.polyval(self.mu_fit_log_coeffs, T_ref_C))
-        return self.mu * mu_rel / max(mu_rel_ref, 1e-12)
+        mu_rel = np.exp(_polyval(self.mu_fit_log_coeffs, T_C))
+        mu_rel_ref = np.exp(_polyval(self.mu_fit_log_coeffs, T_ref_C))
+        mu = self.mu * mu_rel / max(mu_rel_ref, 1e-12)
+        if scalar:
+            self._mu_water_memo = (key, mu)
+        return mu
 
     def solute_diffusivity(self, T_K, slow: bool = False):
         """
@@ -2109,7 +2178,7 @@ class V60Params(V60Constant):
         return np.pi ** 2 * D_eff / core ** 2
 
     # ── 修正 [1][9] 達西萃取（C∞ 平滑過渡 + 毛細管壓門檻） ──────────────────
-    def q_extract(self, h_free, k_val=None, T_K=None, t_sec: float = 0.0, sat=None):
+    def q_extract(self, h_free, k_val=None, T_K=None, t_sec: float = 0.0, sat=None, drive=None):
         """
         壓力頭收支版達西萃取流量 [m³/s]。
 
@@ -2148,15 +2217,30 @@ class V60Params(V60Constant):
             僅 ~22% 模擬時間落在 h < 0.5·h_bed、~6% 落在 h < 0.2·h_bed。
             主沖煮段誤差 < 30%，僅 drain tail 短暫區間 (h/h_bed)² → 0
             時局部高估明顯，但該段 h_eff 也已接近 0，絕對流量影響有限。
+
+        `drive`（內部用）：`q_extract_drive()` 的回傳值；給定時忽略 T_K / t_sec / sat。
         """
         if k_val is None:
             k_val = self.k
+        if drive is None:
+            drive = self.q_extract_drive(h_free, T_K, t_sec, sat=sat)
+        kr_phi_T, h_eff = drive
+        return kr_phi_T * k_val * self.h_bed * h_eff
+
+    def q_extract_drive(self, h_free, T_K=None, t_sec: float = 0.0, sat=None):
+        """
+        `q_extract` 中與 k 無關的兩個因子：(kr(sat)·Φ(T), h_eff)。
+
+        Why: 同一時刻 `flow_state` 以兩個不同的 k（u_proxy 迭代）各算一次 Q_ext；
+             驅動頭分解與 kr 只取決於 (h_free, T, t, sat)，算一次後經 `drive=` 共用。
+             乘法順序與合併前的 `kr·Φ·k·h_bed·h_eff` 相同，結果逐位元一致。
+        """
         if T_K is None:
             T_K = self.T_brew
         phi_T = self.phi_darcy * (self.mu / self.mu_water(T_K))
         h_eff = self.bed_drive_head(h_free, T_K=T_K, t_sec=t_sec, sat=sat)
         kr_sat = 1.0 if sat is None else self.relative_permeability(sat)
-        return kr_sat * phi_T * k_val * self.h_bed * h_eff
+        return kr_sat * phi_T, h_eff
 
     def C_sat_T(self, T_K: float) -> float:
         """
@@ -2197,10 +2281,10 @@ class V60Params(V60Constant):
         if T_K is None:
             T_K = self.T_brew
         # 毛細管壓門檻（與 q_extract 一致的 sigmoid 截止，寬度 0.25）
-        h_free_arr = np.maximum(np.asarray(h_free, dtype=float), 0.0)
+        h_free_arr = _floor(_as_float(h_free), 0.0)
         cap_factor = 1.0 / (1.0 + np.exp(-(h_free_arr - self.h_cap) / (self.h_cap * 0.25)))
         activation = 1.0 / (1.0 + np.exp(-(h_free_arr - self.bypass_onset_head) / self.bypass_onset_width))
-        shape = np.minimum(h_free_arr / max(0.5 * self.h_bed, 1e-12), 1.0)
+        shape = _clip(h_free_arr / max(0.5 * self.h_bed, 1e-12), 0.0, 1.0)  # h_free_arr ≥ 0，下界不作用
         mu_scale = self.mu / self.mu_water(T_K)
         return psi_val * h_free_arr * shape * activation * mu_scale * cap_factor
 
@@ -2478,6 +2562,7 @@ class PourProtocol:
         bloom_end_s: float | None = None,
         width_s: float = 2.0,
         min_increment_ml: float = 0.5,
+        starts: List[float] | None = None,
     ) -> float:
         """
         每一注起始沖擊的脈衝包絡。
@@ -2489,10 +2574,15 @@ class PourProtocol:
         Why:
             使用者實際操作會在每一注開始時用較大力量沖開中心粉床；
             這個瞬間效應不應被平均成整段注水的恆定流率。
+
+        `starts`（內部用）：預先算好的 `pour_start_times(min_increment_ml)`。
+            注水起點只取決於協議本身，ODE RHS 每步重掃整條累積曲線是純開銷；
+            `simulate_brew` 在積分前算一次後傳入。
         """
         if width_s <= 0:
             return 0.0
-        starts = self.pour_start_times(min_increment_ml=min_increment_ml)
+        if starts is None:
+            starts = self.pour_start_times(min_increment_ml=min_increment_ml)
         if bloom_end_s is not None:
             starts = [s for s in starts if s >= bloom_end_s - 1e-9]
         impact = 0.0

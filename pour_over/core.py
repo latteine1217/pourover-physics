@@ -149,6 +149,8 @@ def simulate_brew(
           `rtol/atol/max_step` 保持預設即可重現既有結果；fitting 可用較鬆設定換取速度。
     """
     t_bloom_end = protocol.bloom_end_time()
+    # 注水起點只取決於協議，積分前算一次（RHS 每步重掃累積曲線是純開銷）
+    pour_starts = protocol.pour_start_times()
     n_bins = int(getattr(params, "extraction_bin_count", 1))
     n_layers = int(getattr(params, "axial_node_count", 1))
     n_axial = n_layers * n_bins
@@ -215,7 +217,9 @@ def simulate_brew(
         S_mob = params.mobile_saturation(V_mob, V_imm)
         h_free = params.h_free_from_volume(V_free)
         sat_abs = V_abs / V_full                       # 顆粒吸水飽和度（溶脹驅動量）
-        impact = protocol.pour_start_impact(t, bloom_end_s=t_bloom_end, width_s=params.wetbed_impact_tau)
+        impact = protocol.pour_start_impact(
+            t, bloom_end_s=t_bloom_end, width_s=params.wetbed_impact_tau, starts=pour_starts,
+        )
         Q_in = protocol.pour_rate(t)
 
         # ── 水量分流：注水 → 顆粒吸收 → 填 mobile 孔隙 → 自由水 ───────────────
@@ -228,27 +232,29 @@ def simulate_brew(
 
         # ── 出流：驅動頭 = h_free + S_mob·h_bed，導水能力由 kr(S_mob) 控制 ────
         area = max(params.area(params.h_bed + h_free), 1e-12)
+        # 兩次 k_eff / q_extract 只差 (q_in, u_pore) 與 k：與它們無關的堵塞項、
+        # 驅動頭與 kr 在此算一次後共用（同引數重算只是開銷，結果逐位元相同）
+        clog_terms = params.k_beta_components(V_bed_cum)
+        drive = params.q_extract_drive(h_free, T, t, sat=S_mob)
         k_base = params.k_eff(
             V_bed_cum, sat_abs, h_free,
             q_in=0.0, u_pore=0.0, t_sec=t, bloom_end_s=None,
-            pour_impact=impact,
+            pour_impact=impact, clog_terms=clog_terms,
         )
         psi_val = params.psi_eff(V_out)
-        Q_ext_base = params.q_extract(h_free, k_base, T, t, sat=S_mob)
-        Q_pref_base = params.q_preferential(
-            h_free, xi_pref, T_K=T, t_sec=t, sat=S_mob, bloom_end_s=t_bloom_end
-        )
-        phi_eff = params.phi_effective(sat_abs, h_free)
-        u_proxy = max(Q_ext_base + Q_pref_base, 0.0) / max(area * phi_eff, 1e-12)
-        k_val = params.k_eff(
-            V_bed_cum, sat_abs, h_free,
-            q_in=Q_in, u_pore=u_proxy, t_sec=t, bloom_end_s=t_bloom_end,
-            pour_impact=impact,
-        )
-        Q_ext = params.q_extract(h_free, k_val, T, t, sat=S_mob)
+        Q_ext_base = params.q_extract(h_free, k_base, drive=drive)
+        # 快路徑流量不依賴 k，u_proxy 與最終出流共用同一個值
         Q_pref = params.q_preferential(
             h_free, xi_pref, T_K=T, t_sec=t, sat=S_mob, bloom_end_s=t_bloom_end
         )
+        phi_eff = params.phi_effective(sat_abs, h_free)
+        u_proxy = max(Q_ext_base + Q_pref, 0.0) / max(area * phi_eff, 1e-12)
+        k_val = params.k_eff(
+            V_bed_cum, sat_abs, h_free,
+            q_in=Q_in, u_pore=u_proxy, t_sec=t, bloom_end_s=t_bloom_end,
+            pour_impact=impact, clog_terms=clog_terms,
+        )
+        Q_ext = params.q_extract(h_free, k_val, drive=drive)
         Q_bp = params.q_bypass(h_free, psi_val, T)
         Q_darcy = Q_ext + Q_pref + Q_bp
 
@@ -271,7 +277,7 @@ def simulate_brew(
 
         return {
             "h_free": h_free, "sat": sat_abs, "S_mob": S_mob, "V_pore": V_pore, "area": area,
-            "Q_in": Q_in, "A_tot": A_tot, "A_in": A_in, "A_free": A_free, "A_mob": A_mob,
+            "impact": impact, "Q_in": Q_in, "A_tot": A_tot, "A_in": A_in, "A_free": A_free, "A_mob": A_mob,
             "P_fill": P_fill, "P_free": P_free, "P_stream": P_stream, "C_imm": C_imm,
             "k_val": k_val, "psi_val": psi_val, "phi_eff": phi_eff,
             "Q_ext": Q_ext, "Q_pref": Q_pref, "Q_bed": Q_bed, "Q_bp": Q_bp, "Q_out": Q_out,
@@ -281,24 +287,25 @@ def simulate_brew(
     def rhs(t, state):
         V_free = max(float(state[0]), 0.0)
         V_mob = max(float(state[1]), 0.0)
-        V_imm = float(np.clip(state[2], 0.0, V_pore_max))
-        V_abs = float(np.clip(state[3], 0.0, V_full))
-        w = float(np.clip(state[4], 0.0, 1.0))
+        # 純量夾值用 min(max(·))：與 np.clip 逐位元相同，省去每次 ~2 µs 的 ufunc 派送
+        V_imm = min(max(float(state[2]), 0.0), V_pore_max)
+        V_abs = min(max(float(state[3]), 0.0), V_full)
+        w = min(max(float(state[4]), 0.0), 1.0)
         V_out = float(state[5])
         V_bed_cum = float(state[6])
         C_fast_layers = np.maximum(np.asarray(state[c_fast_slice], dtype=float), 0.0).reshape(n_layers, n_bins)
         M_fast_layers = np.maximum(np.asarray(state[m_fast_slice], dtype=float), 0.0).reshape(n_layers, n_bins)
         C_slow_layers = np.maximum(np.asarray(state[c_slow_slice], dtype=float), 0.0).reshape(n_layers, n_bins)
         M_slow_layers = np.maximum(np.asarray(state[m_slow_slice], dtype=float), 0.0).reshape(n_layers, n_bins)
-        T = float(np.clip(state[T_idx], params.T_amb, params.T_brew + 5.0))
-        T_dripper = float(np.clip(state[T_dripper_idx], params.T_amb - 5.0, params.T_brew + 5.0))
-        xi_pref = float(np.clip(state[pref_idx], 0.0, 1.0))
+        T = float(min(max(float(state[T_idx]), params.T_amb), params.T_brew + 5.0))
+        T_dripper = float(min(max(float(state[T_dripper_idx]), params.T_amb - 5.0), params.T_brew + 5.0))
+        xi_pref = min(max(float(state[pref_idx]), 0.0), 1.0)
 
         fs = flow_state(t, V_free, V_mob, V_imm, V_abs, w, V_out, V_bed_cum, T, xi_pref)
         Q_in = fs["Q_in"]
         Q_bed, Q_out = fs["Q_bed"], fs["Q_out"]
         V_pore, h_free, S_mob = fs["V_pore"], fs["h_free"], fs["S_mob"]
-        impact = protocol.pour_start_impact(t, bloom_end_s=t_bloom_end, width_s=params.wetbed_impact_tau)
+        impact = fs["impact"]
 
         # ── 四個水池的收支：每一項都是「從某池搬到另一池」，守恆是代數恆等式 ──
         #   d(V_abs + V_imm + V_mob + V_free)/dt ≡ Q_in − Q_out
