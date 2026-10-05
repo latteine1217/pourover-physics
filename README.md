@@ -240,9 +240,11 @@ another's error:
 3. **Extraction** (`τ_tort`) is fitted against TDS, and only when the model's
    final volume is within 5% of the measured one.
 
-Each stage is accepted only if it lowers χ² by at least 1. Each fit uses 7
-starting points (a Latin hypercube plus a warm start), and every reported
-parameter comes with a 95% conditional-slice interval.
+Each stage minimises its χ² as a weighted least-squares problem (trust-region
+reflective, on the signed residual vector) and is accepted only if it lowers χ²
+by at least 1. Each fit uses 3 starting points (a two-point Latin hypercube plus
+a warm start), and every reported parameter comes with a 95% conditional-slice
+interval.
 
 ### Parameter classes
 
@@ -298,7 +300,7 @@ Four-brew benchmark (`data/benchmark_suite_summary.csv`):
 |---|---|---|---|---|---|
 | `kinu29/4:12` (canonical) | video | 0.358 | 1.34 / 0.33 | +0.11 g/L | PASS |
 | `kinu27/4:12` | video | 0.364 | 0.91 / 0.52 | +0.14 g/L | FAIL (residual whiteness) |
-| `kinu28/4:20` | video | 0.500 | 1.36 / 0.31 | +0.03 g/L | PASS |
+| `kinu28/4:20` | video | 0.501 | 1.36 / 0.31 | +0.03 g/L | PASS |
 | `kinu29/4:11` | hand log | 8.38 | 0.30 / 0.85 | +0.10 g/L | FAIL (log-record bias) |
 
 **Gates:**
