@@ -68,7 +68,10 @@
 | `EXP-20260928-F13-POUR2-RESTART-DIAGNOSTIC` | `2026-09-28 13:16:19 +0800` | 第二注起點模型出液領先的既有資料診斷 | 定義已知限制 2 的現行判讀：量測換算、泡沫、秤延遲、通用出口延遲皆已排除；缺陷只出現在出流停止後重啟的第二注（提前 2.25–3.75 s、總量守恆）；列出下一輪量測的預先登記判準；另發現刻度欄估計量鎖在刻度線（未修） | （scratchpad `p1/`；repo 無變更） |
 | `EXP-20260928-F13-C-PIECEWISE-ODE` | `2026-09-28 13:37:22 +0800` | ODE 在注水率斷點間分段積分 | 定義現行積分方式：χ² 路徑噪音 0.07–0.17 → ~1e-8、截斷偏差 −0.03…−0.06 消除、累積注水量誤差 0.046 → < 1e-9 mL；四案已於 `EXP-20260928-F13-REFIT` 重擬 | `pour_over/core.py`, `pour_over/params.py`, `tests/test_piecewise_integration.py`, `tests/test_chi2_smoothness.py` |
 | `EXP-20260928-F13-B-TAU-WET-PROFILE` | `2026-09-28 15:15:43 +0800` | `tau_wet` profile（三案） | 定義已知限制 1 的現行判讀：下界 10 s 未實質卡住 canonical（Δχ² 0.44，拉力來自第二注重啟窗）→ 不放寬下界、不凍結；`tau_wet` 由第三注之後的注水期與排水段決定、三案差一個數量級，物理意義與名義不符，屬結構問題 | （scratchpad `b/`；repo 無變更） |
-| `EXP-20260928-F13-REFIT` | `2026-09-28 18:56:09 +0800` | 分段積分下四案完整重擬 | 定義目前的 `[BASELINE]`（`BL-20260928-f13-refit`）：benchmark 狀態不變（canonical、kinu28 PASS；kinu27 僅白噪音 FAIL；4:11 FAIL）；三個影片案例 multi-start 收斂到同一點（span ≤ 0.01）；canonical `tau_wet` 在下界 10.00 s（F13-B 判定不放寬） | `data/kinu_29_light/4:12/kinu29_light_20g_flow_fit_summary.csv`, `data/kinu_27_light/4:12/kinu27_light_20g_flow_fit_summary.csv`, `data/kinu_28_light/4:20/kinu28_light_20g_flow_fit_summary.csv`, `data/kinu_29_light/4:11/kinu29_light_20g_flow_fit_summary.csv`, `data/benchmark_suite_summary.csv`, `data/kinu29_fit_identifiability_slices.csv`, `data/kinu29_thermal_identifiability_slices.csv` |
+| `EXP-20260928-F13-REFIT` | `2026-09-28 18:56:09 +0800` | 分段積分下四案完整重擬 | 定義前一版正式 `[BASELINE]`（`BL-20260928-f13-refit`，已被 `EXP-20261005-HYD-LSQ` 取代；**2026-10-05 更正**：4:11 第二個 basin 確實存在（Corey n ≈ 2.10、χ² ≈ 265），但 Powell 停住的 n 4.4–5.7 兩點不是極小值，見 `EXP-20261005-STAGE-LSQ`）：benchmark 狀態不變（canonical、kinu28 PASS；kinu27 僅白噪音 FAIL；4:11 FAIL）；三個影片案例 multi-start 收斂到同一點（span ≤ 0.01）；canonical `tau_wet` 在下界 10.00 s（F13-B 判定不放寬） | `data/kinu_29_light/4:12/kinu29_light_20g_flow_fit_summary.csv`, `data/kinu_27_light/4:12/kinu27_light_20g_flow_fit_summary.csv`, `data/kinu_28_light/4:20/kinu28_light_20g_flow_fit_summary.csv`, `data/kinu_29_light/4:11/kinu29_light_20g_flow_fit_summary.csv`, `data/benchmark_suite_summary.csv`, `data/kinu29_fit_identifiability_slices.csv`, `data/kinu29_thermal_identifiability_slices.csv` |
+| `EXP-20261005-FIT-SPEED` | `2026-10-05 18:36:17 +0800` | 擬合加速（RHS 純量開銷、分段積分步長延續、multi-start 多行程平行）+ 四案重擬 | 定義同日中間版 `[BASELINE]`（`BL-20261005-fit-speed`，已被 `EXP-20261005-HYD-LSQ` 取代）：四案 7 起點重擬由約 10700 s 降到 1567 s；單次 coarse 模擬 1.13 → 約 0.25 s；參數移動 ≤ 0.35%、χ² 移動 ≤ 0.005（rtol 1e-7 截斷誤差量級）；benchmark 狀態與 identifiability 分級不變；numba 評估後不採用 | `pour_over/core.py`, `pour_over/params.py`, `pour_over/fitting.py`, `data/kinu_29_light/4:12/kinu29_light_20g_flow_fit_summary.csv`, `data/kinu_27_light/4:12/kinu27_light_20g_flow_fit_summary.csv`, `data/kinu_28_light/4:20/kinu28_light_20g_flow_fit_summary.csv`, `data/kinu_29_light/4:11/kinu29_light_20g_flow_fit_summary.csv`, `data/benchmark_suite_summary.csv`, `data/kinu29_fit_identifiability_slices.csv`, `data/kinu29_thermal_identifiability_slices.csv` |
+| `EXP-20261005-HYD-LSQ` | `2026-10-05 22:31:24 +0800` | 水力 stage 1/2 由 Powell 改為 least_squares（殘差向量）+ 四案重擬 | 定義同日中間版 `[BASELINE]`（`BL-20261005-hyd-lsq`，已被 `EXP-20261005-STAGE-LSQ` 取代）：canonical 單起點 1343 → 130 次模擬（344 → 35 s）；四案 7 起點重擬 1567 → 362 s；參數與 CI 移動 ≤ 1e-3（相對）、χ² ≤ 0.001；benchmark 與 identifiability 不變；4:11 七起點全部收斂到 χ² 234.93（**同日更正**：「雙 basin 不成立」的推論錯誤，第二個極小值在 n ≈ 2.10，見 `EXP-20261005-STAGE-LSQ`） | `pour_over/fitting.py`, `data/kinu_29_light/4:12/kinu29_light_20g_flow_fit_summary.csv`, `data/kinu_27_light/4:12/kinu27_light_20g_flow_fit_summary.csv`, `data/kinu_28_light/4:20/kinu28_light_20g_flow_fit_summary.csv`, `data/kinu_29_light/4:11/kinu29_light_20g_flow_fit_summary.csv`, `data/benchmark_suite_summary.csv`, `data/kinu29_fit_identifiability_slices.csv`, `data/kinu29_thermal_identifiability_slices.csv` |
+| `EXP-20261005-STAGE-LSQ` | `2026-10-05 23:26:04 +0800` | stage 4/5/7 改 least_squares（總 χ² 殘差向量）+ multi-start 7 → 3 起點 + 四案重擬 | 定義目前的 `[BASELINE]`（`BL-20261005-stage-lsq`）：canonical 單起點 130 → 116 次模擬；四案重擬 362 → 151 s；參數與 CI 移動 ≤ 6e-4（相對）、χ² ≤ 0.001；benchmark 與 identifiability 不變；4:11 第二個局部極小確認存在（n 2.10、χ² 264.9，連線障壁 Δχ² ≈ 3），3 起點已捕捉 | `pour_over/fitting.py`, `tests/test_fitting_loss.py`, 四案 `*_flow_fit_summary.csv`, `data/benchmark_suite_summary.csv`, `data/kinu29_fit_identifiability_slices.csv`, `data/kinu29_thermal_identifiability_slices.csv` |
 
 ---
 
@@ -87,30 +90,32 @@
 
 ## [BASELINE] Current
 
-- `baseline_id`: `BL-20260928-f13-refit`（**狀態：四案以分段積分完整重擬；benchmark：canonical `kinu29/4:12` PASS、`kinu28/4:20` PASS、`kinu27/4:12` FAIL（僅殘差白噪音）、`kinu29/4:11` FAIL（reduced χ² 與殘差白噪音）；整體 FAIL**）
-- `status`: `active`。canonical 維持 **`kinu29/4:12`（沖煮錄影 `IMG_3346.MOV`）**。四案在 ODE 改為注水率斷點間分段積分（`EXP-20260928-F13-C-PIECEWISE-ODE`）後以 `rtol 1e-7`、7 起點完整重擬（2026-09-28 15:57 → 18:56）；`kinu29/4:11`（紀錄表，無錄影）標 `drained_log_bias_suspected`，不作展示基準
-- `supersedes`: `BL-20260928-f12c-refit`（理由：F13-C 找到 χ² 路徑噪音與截斷偏差的根因——單段積分跨過注水率斷點——並改為分段積分；**模型方程未改**，live 參數集合與 bounds 未改。詳見 `[ENTRY] EXP-20260928-F13-REFIT`）
-- `fit_solver_rtol` / `solver_rtol_eval`: `1e-7`（沿用，未變）；積分方式：`core._solve_piecewise`（F13-C）
+- `baseline_id`: `BL-20261005-stage-lsq`（**狀態：四案以全 stage least_squares、3 起點完整重擬；benchmark：canonical `kinu29/4:12` PASS、`kinu28/4:20` PASS、`kinu27/4:12` FAIL（僅殘差白噪音）、`kinu29/4:11` FAIL（reduced χ² 與殘差白噪音）；整體 FAIL**）
+- `status`: `active`。canonical 維持 **`kinu29/4:12`（沖煮錄影 `IMG_3346.MOV`）**。四案以 `rtol 1e-7`、3 起點（LHS 2 + sibling warm-start）完整重擬（2026-10-05 23:24 → 23:28，151 s）；`kinu29/4:11`（紀錄表，無錄影）標 `drained_log_bias_suspected`，不作展示基準
+- `supersedes`: `BL-20261005-hyd-lsq` 與 `BL-20261005-fit-speed`（同日中間版）；前一版正式基準 `BL-20260928-f13-refit`。改動只在數值執行面：`_solve_piecewise` 跨段延續步長、各 stage optimizer 由 Powell 改為殘差向量的 `least_squares`、multi-start 7 → 3 起點。**模型方程未改**，live 參數集合、bounds、prior、觀測集合、目標函數未改。詳見 `[ENTRY] EXP-20261005-STAGE-LSQ`、`EXP-20261005-HYD-LSQ`、`EXP-20261005-FIT-SPEED`
+- `fit_solver_rtol` / `solver_rtol_eval`: `1e-7`（沿用，未變）；積分方式：`core._solve_piecewise`（F13-C 分段，段間延續步長）
+- `fit optimizer`：stage 1/2/4/5/7 皆為 `least_squares`（TRF，log10 空間，前向差分步長 1e-3 dex；stage 5 保留 seed 網格與候選擇優）；multi-start LHS 2 + sibling warm-start
 - `profile_source`：三個影片案例為 `video`；`kinu29/4:11` 為 `log`（`measured_io.resolve_flow_profile_path(source="auto")`）
 - `time_base`：影片版 `real_s`；紀錄表 `scale_timer_s`（`t_real = time_s / 1.0186`）
 - `preprocessing`: `pour_over.preprocess`（`_prepare_measured_case(preprocess=True)`）。三個影片案例的 `preprocess_corrections` 只有 `t=0s reading_time_sigma_s 1->0.1`；`dripper_mass_g` 的 meta 共識修正（224.1 → 123.5）發生在 `tools/video/build_profile.py` 組 profile 時（影片版 CSV meta 已為 123.5），不出現在 summary 的 `preprocess_corrections`。raw CSV（Class A）未改動
 - `fit objective`：stage 1/2/4（水力）最小化 `chi2_hydraulic` = volume + stop_time + `k_beta` prior + Corey prior；stage 5（熱）與 stage 7（萃取）以總 χ² 擬合（`EXP-20260928-F12c-FIT-BUGS-AND-REFIT`）
 
-### 與前一基準對照（改動只有數值積分方式；觀測集合、模型方程、live 參數、bounds 皆未改）
+### 與前一正式基準（F13）對照（改動只有數值執行面；觀測集合、模型方程、live 參數、bounds、目標函數皆未改）
 
-觀測集合與 F12c 相同，數字可直接比較。F12c 欄的 χ² 是舊單段積分下的值（帶 −0.03…−0.06 截斷偏差）。
+觀測集合與 F13 相同，數字可直接比較。
 
-| case | χ²（F12c → F13） | reduced χ² | DW / lag1（r/σ，→） | multi-start χ² span（→） | k [m²]（→） | Corey n（→） | tau_wet [s]（→） |
+| case | χ²（F13 → 本版） | reduced χ² | DW / lag1（r/σ，→） | multi-start χ² span（→） | k [m²]（→） | Corey n（→） | tau_wet [s]（→） |
 |---|---|---|---|---|---|---|---|
-| `kinu29/4:12`（canonical） | `9.970 → 9.940` | `0.358 → 0.358` | `1.342 / 0.326 → 1.336 / 0.327` | `0.43 → 0.01` | `6.462e-11 → 6.462e-11` | `3.189 → 3.140` | `10.65 → 10.00`（**貼下界**） |
-| `kinu27/4:12` | `6.972 → 6.917` | `0.361 → 0.364` | `0.949 / 0.503 → 0.908 / 0.520` | `0.21 → 0.00` | `6.76e-11 → 6.67e-11` | `3.668 → 3.401` | `16.03 → 15.72` |
-| `kinu28/4:20` | `14.968 → 15.004` | `0.498 → 0.500` | `1.378 / 0.303 → 1.361 / 0.308` | `0.14 → 0.00` | `7.89e-11 → 7.65e-11` | `3.533 → 3.419` | `39.31 → 41.82` |
-| `kinu29/4:11` | `234.64 → 234.93` | `8.37 → 8.38` | `0.297 / 0.851 → 0.296 / 0.851` | `37.3 → 38.9`（兩個 basin） | `5.31e-11 → 5.32e-11` | `2.955 → 2.888` | `11.23 → 11.15` |
+| `kinu29/4:12`（canonical） | `9.940 → 9.944` | `0.358 → 0.358` | `1.336 / 0.327 → 1.338 / 0.327` | `0.01 → 0.0001` | `6.462e-11 → 6.462e-11` | `3.140 → 3.129` | `10.00 → 10.00`（**貼下界**） |
+| `kinu27/4:12` | `6.917 → 6.918` | `0.364 → 0.364` | `0.908 / 0.520 → 0.908 / 0.520` | `0.00 → 0.0003` | `6.670e-11 → 6.670e-11` | `3.401 → 3.398` | `15.72 → 15.72` |
+| `kinu28/4:20` | `15.004 → 15.005` | `0.500 → 0.501` | `1.361 / 0.308 → 1.363 / 0.307` | `0.00 → 0.0003` | `7.647e-11 → 7.656e-11` | `3.419 → 3.418` | `41.82 → 41.75` |
+| `kinu29/4:11` | `234.93 → 234.93` | `8.38 → 8.38` | `0.296 / 0.851 → 0.296 / 0.851` | `38.9 → 30.0`（兩個 basin） | `5.315e-11 → 5.314e-11` | `2.890 → 2.890` | `11.16 → 11.16` |
 
-- **最大的改變是最佳化的可重現性**：三個影片案例的 7 個起點收斂到同一點（canonical k spread 3.6% → 0.1%、Corey n spread 26.1% → 0.4%）。F12c 的 multi-start 分散主要是數值噪音，不是參數不確定性。
-- 參數移動都在 F12c 的 CI 內；benchmark 狀態不變。
-- canonical `tau_wet` 由 10.65 移到下界 10.00 s，與 F13-B profile 一致（無下界時最小值在 5 s，Δχ² 0.44）。
-- `kinu29/4:11` 仍有兩個起點落在 Corey n 4.4–5.6 的另一個 basin（χ² 269.6 / 273.8），這是紀錄表資料的多峰結構，不是噪音。
+（multi-start span 欄：F13 為 7 起點，本版為 3 起點。）
+
+- 參數移動 ≤ 0.35%（canonical Corey n），全部在 F13 的 CI 內；benchmark 狀態與 identifiability 分級不變。
+- 三個影片案例 3 起點收斂到同一點（canonical Corey n 3.129–3.130）。
+- **`kinu29/4:11` 有兩個局部極小**：winner χ² 234.93（n 2.89）；第二個在 χ² 264.9、k 4.93e-11、n 2.10、tau_wet 13.2，沿兩點連線有 Δχ² ≈ 3 的障壁（`EXP-20261005-STAGE-LSQ`）。F13 記錄的 Powell 停點（χ² 269.6 / 273.7、n 4.4–5.7）不是這個極小值，是 Powell 未收斂。紀錄表資料多峰的判讀成立，multi-start 對此案必要。
 
 ### 固定設定（不隨重擬改變）
 
@@ -131,34 +136,34 @@
 - `legacy_psd_bins_csv`: `data/kinu29_psd_bins.csv`（頂層 legacy 掃描，17.2 px/mm；僅作 fallback）
 - 熱端配置（影片 case）：`U_liquid_dripper_W_m2K` live；`lambda_server_ambient` 凍結 `3.7e-4 s⁻¹`（Class D 物理估計）；`lambda_cool = 3.7e-4`、`lambda_dripper_ambient = 0.004` 凍結；`vessel_equivalent_ml = 42.4`
 
-### 校準指標（canonical `kinu29/4:12`，`data/kinu_29_light/4:12/kinu29_light_20g_flow_fit_summary.csv` mtime 2026-09-28 18:56:09）
+### 校準指標（canonical `kinu29/4:12`，`data/kinu_29_light/4:12/kinu29_light_20g_flow_fit_summary.csv` mtime 2026-10-05 23:26:04）
 
-summary 與 benchmark reload（`data/benchmark_suite_summary.csv` mtime 2026-09-28 18:58:45）四案 χ² 逐位元相同（canonical `9.939693216771554`）。
+summary 與 benchmark reload（`data/benchmark_suite_summary.csv` mtime 2026-10-05 23:29:41）四案 χ² 逐位元相同（canonical `9.94405120732337`）。
 
 | Metric | Value |
 |---|---|
 | `k_fit` | `6.462e-11 m²` |
-| `k_ci95` | `[6.361e-11, 6.746e-11] m²`（hydraulic identifiability hard，local / wide span 23.4 / 131.2） |
-| `sat_rel_perm_exp_fit` | `3.140` |
-| `sat_rel_perm_exp_ci95` | `[2.125, 4.250]`（medium，0.83 / 3.13） |
+| `k_ci95` | `[6.361e-11, 6.745e-11] m²`（hydraulic identifiability hard，local / wide span 23.2 / 130.8） |
+| `sat_rel_perm_exp_fit` | `3.129` |
+| `sat_rel_perm_exp_ci95` | `[2.125, 4.248]`（medium，0.86 / 3.18） |
 | `k_beta_fit` | `2515`（凍結 = PSD prior，Class B；不回報 CI） |
 | `beta_throat` / `beta_deposition` | `1715` / `800.1` |
 | `tau_lag` | `0.5 s`（凍結，Class B 出口幾何時間；不回報 CI） |
 | `tau_wet_s` | `10.00 s`（bounds `[10, 60]`，**`tau_wet_at_bound = True`**；F13-B：無下界時最小值 5 s、Δχ² 0.44，拉力來自第二注重啟窗，不放寬） |
-| `tau_wet_ci95` | `[None, 16.32] s`（**單端 None**；identifiability medium，0.34 / 1.02；依 §6 兩端皆 None 才凍結，故不凍結） |
-| `U_liquid_dripper_W_m2K` | `258.2`，CI `[184.0, 362.4]`（live；thermal identifiability medium，±15% / ±30% Δχ² 0.72 / 3.70） |
+| `tau_wet_ci95` | `[None, 16.28] s`（**單端 None**；identifiability medium，0.35 / 1.04；依 §6 兩端皆 None 才凍結，故不凍結） |
+| `U_liquid_dripper_W_m2K` | `258.4`，CI `[184.1, 362.6]`（live；thermal identifiability medium，±20% / ±40% Δχ² 0.71 / 3.69） |
 | `lambda_server_ambient` | `3.7e-4 s⁻¹`（凍結，Class D 物理估計；thermal identifiability weak，0.17 / 0.50） |
-| `tau_tort` | `7.465`（hard，1.31 / 5.36） |
-| `chi2` / `chi2_data` / `chi2_hydraulic` | `9.940` / `9.297` / `4.255` |
+| `tau_tort` | `7.466`（hard，1.31 / 5.36） |
+| `chi2` / `chi2_data` / `chi2_hydraulic` | `9.944` / `9.300` / `4.258` |
 | χ² 分項 | volume `4.24`、server 時序 `5.03`（6 點）、stop `0.01`、extracted mass `0.02`、cup `0`（時序存在時不計分）；prior 合計 `0.64` |
 | `reduced_chi2` (`dof` / `n_obs`) | `0.358`（`26` / `31`） |
-| `durbin_watson` / `residual_lag1` / `runs_z`（r/σ） | `1.336` / `0.327` / `-2.62`（gate PASS；runs z 超過 |2|，不是 gate） |
+| `durbin_watson` / `residual_lag1` / `runs_z`（r/σ） | `1.338` / `0.327` / `-2.62`（gate PASS；runs z 超過 |2|，不是 gate） |
 | σ-class ≤ 6 mL 子序列（附報，n 16） | DW `1.057` / lag1 `0.141` |
 | 未加權 mL 殘差（舊定義，附報） | DW `0.871` / lag1 `0.563` |
-| `V_out RMSE`（診斷） | `2.57 mL` |
+| `V_out RMSE`（診斷） | `2.58 mL` |
 | `q_out RMSE`（診斷） | `0.491 mL/s` |
 | `retention RMSE` | `2.59 mL` |
-| `retention_final_model` / `_obs` | `53.64 mL` / `52.90 mL`（t = 125 s，濾杯移開前最後一個 fit 點） |
+| `retention_final_model` / `_obs` | `53.59 mL` / `52.90 mL`（t = 125 s，濾杯移開前最後一個 fit 點） |
 | `cup_stop_time_error_s` | `+0.20 s`（`stop_operator = level`；觀測停流 120.91 s） |
 | `dripper_removed_time_s` / `thermo_break_s` | `126.94 s` / `127.5 s`（熱電偶驟降即濾杯移開；模型在該時刻 q_cup `0.49 mL/s`，診斷） |
 | `cup_temp_error_C`（診斷，不計分） | `-0.44 °C`（影片杯溫 75.0 °C，t_read = 132 s） |
@@ -166,35 +171,214 @@ summary 與 benchmark reload（`data/benchmark_suite_summary.csv` mtime 2026-09-
 | server 全點（診斷） | RMSE `4.18 °C` / bias `-2.57 °C`（n 96；V < 150 mL 段容器耦合結構誤差，不進 χ²） |
 | 出水口樣本外（診斷） | RMSE `2.26 °C` / bias `-0.12 °C`（連續出流窗、濾杯移開前） |
 | `final_tds_gl_obs` / `tds_error_gl` | `11.56 g/L` / `+0.106 g/L`（量測分母取最後一個 `use_for_fit` 列） |
-| `water_balance_residual_ml` | `3.8e-13 mL` |
-| `energy_residual_fraction` | `2.65e-6` |
+| `water_balance_residual_ml` | `3.1e-13 mL` |
+| `energy_residual_fraction` | `2.66e-6` |
 | `clip_active_fraction` | `0%` |
-| `stage7_skipped_reason` | 無（七個起點 stage 7 皆 accept，Δχ² −6.18） |
-| multi-start | 7 起點 χ² `[9.94, 9.95]`（span 0.01）；k spread 0.1%、Corey n spread 0.4% |
+| `stage7_skipped_reason` | 無（winner 的 stage 7 accept） |
+| multi-start | 3 起點 χ² `[9.9441, 9.9442]`（span 0.0001）；Corey n `3.129–3.130` |
 | `preprocess_corrections` | `t=0s reading_time_sigma_s 1->0.1`（與預期一致） |
 
-### 四 case benchmark（`data/benchmark_suite_summary.csv` mtime 2026-09-28 18:58:45）
+### 四 case benchmark（`data/benchmark_suite_summary.csv` mtime 2026-10-05 23:29:41）
 
 | case | status | `reduced_chi2`（dof） | DW / lag1（r/σ） | σ≤6 DW / lag1（n） | retention | cup ΔT [°C] | server T(t) RMSE | TDS err [g/L] | cup stop [s] |
 |---|---|---|---|---|---|---|---|---|---|
-| `kinu29/4:12`（canonical, video） | `PASS` | `0.358`（26） | `1.336 / 0.327` | `1.057 / 0.141`（16） | `1.4%` | `-0.44` | `0.92 °C OK` | `+0.11` | `+0.20`（level） |
+| `kinu29/4:12`（canonical, video） | `PASS` | `0.358`（26） | `1.338 / 0.327` | `1.057 / 0.141`（16） | `1.3%` | `-0.44` | `0.92 °C OK` | `+0.11` | `+0.20`（level） |
 | `kinu27/4:12`（video） | `FAIL` | `0.364`（17） | `0.908 / 0.520` **FAIL** | `1.025 / 0.453`（17） | `0.7%` | `-0.01` | n/a（QC 排除） | `+0.14` | `-0.25`（level） |
-| `kinu28/4:20`（video） | `PASS` | `0.500`（25） | `1.361 / 0.308` | `2.325 / -0.320`（13） | `1.7%` | `+0.28` | `1.16 °C OK` | `+0.03` | `+0.48`（level） |
-| `kinu29/4:11`（log） | `FAIL` | `8.376`（28）**FAIL** | `0.296 / 0.851` **FAIL** | `0.296 / 0.851`（30） | `3.6%` | `-0.003` | n/a（無時序） | `+0.10` | `+0.20`（q_threshold） |
+| `kinu28/4:20`（video） | `PASS` | `0.501`（25） | `1.363 / 0.307` | `2.332 / -0.321`（13） | `1.6%` | `+0.28` | `1.16 °C OK` | `+0.03` | `+0.48`（level） |
+| `kinu29/4:11`（log） | `FAIL` | `8.375`（28）**FAIL** | `0.296 / 0.851` **FAIL** | `0.296 / 0.851`（30） | `3.6%` | `-0.003` | n/a（無時序） | `+0.10` | `+0.20`（q_threshold） |
 
 gates：`reduced_chi2 ≤ 3.0` | retention `≤ 15%` | 殘差白噪音（r/σ）`DW ≥ 1.0` 或 `lag1 ≤ 0.5` | `|cup ΔT| ≤ 1.0 °C` | server T(t) RMSE `≤ 2.0 °C` | `|ΔTDS| ≤ 1.44 g/L` | water `≤ 0.05 mL` | clip `≤ 1%`。
 `kinu27/4:12` 只敗白噪音一項（lag1 0.520 超門檻 0.020、DW 0.908），另標 `server_probe_not_mixed_mean`（分享壺溫時序 QC 排除，退回單點杯溫；`lambda_server` live = 1.48e-3）。
-`kinu28/4:20` 的 U = 393.5，CI `[288.4, 584.9]` 上端超出物理區間 550（點估計在區間內）。
+`kinu28/4:20` 的 U = 393.3，CI `[288.5, 585.1]` 上端超出物理區間 550（點估計在區間內）。
 `kinu29/4:11` 敗 reduced χ² 與白噪音兩項，殘差仍是紀錄表 `drained` 讀值領先的長週期擺盪（`drained_log_bias_suspected`）。
 
 ### 已知限制（本基準下仍成立，勿省略）
 
-1. **canonical `tau_wet` 在下界**：10.00 s（下界 10 s，`at_bound = True`），CI `[None, 16.32]`（單端）；identifiability medium（0.34 / 1.02，wide span 剛好在 1.0 邊界上）。依 §6 不凍結，但不得把 10.00 s 當成已辨識值引用。F13-B profile（`EXP-20260928-F13-B-TAU-WET-PROFILE`）：下界未實質卡住（無下界時最小值 5 s，Δχ² 0.44，拉力來自第二注重啟窗），不放寬；三案 `tau_wet`（10.00 / 15.72 / 41.82 s）由第三注之後的注水期與排水段決定，物理意義與「悶蒸潤濕時間」不符，屬結構問題。
+1. **canonical `tau_wet` 在下界**：10.00 s（下界 10 s，`at_bound = True`），CI `[None, 16.28]`（單端）；identifiability medium（0.35 / 1.04，wide span 剛好在 1.0 邊界上）。依 §6 不凍結，但不得把 10.00 s 當成已辨識值引用。F13-B profile（`EXP-20260928-F13-B-TAU-WET-PROFILE`）：下界未實質卡住（無下界時最小值 5 s，Δχ² 0.44，拉力來自第二注重啟窗），不放寬；三案 `tau_wet`（10.00 / 15.72 / 41.75 s）由第三注之後的注水期與排水段決定，物理意義與「悶蒸潤濕時間」不符，屬結構問題。
 2. **第二注起點模型出液領先仍在**：canonical 45 / 50 s 殘差 `+6.9 / +6.5 mL`（fit 格點；1 s 序列峰值 +8.4 mL @49 s），`kinu27` `+8.8 / +9.3 mL`，`kinu28` 峰值 `+16.6 mL @55 s`（`scratchpad/f13/evalstate_f12c.json`）。此段 σ = 15 mL，r/σ gate 上不顯著；σ≤6 子序列不含此段。F12b 分層串聯床為負面結果，機制未定。F13 診斷（`EXP-20260928-F13-POUR2-RESTART-DIAGNOSTIC`）：量測換算、泡沫、秤延遲皆不足以解釋；缺陷只出現在出流停止後重啟的第二注（模型脈衝提前 2.25–3.75 s、總量大致守恆），第 3 注以後 |Δt| ≤ 0.75 s。
 3. **分享壺壁的前段熱容耦合**：V < 150 mL 時量測有效熱容 22–37 mL（常數 42.4），零參數濕潤面積耦合被量測否定（F12a §4）；候選為濾杯下方頂空蒸汽冷凝加熱乾壁，需新傳熱係數，未做。150 mL 門檻保留。
 4. **`kinu27/4:12` 分享壺探頭未量到混合平均**（`server_probe_not_mixed_mean`，量測 C_eff 65.2 mL vs 42.4），該案熱端退回單點杯溫、`lambda_server` live（1.51e-3，含分層影響，不作交叉驗證值）。
 5. **出水口熱電偶「斷流」實為濾杯移開時刻**（三案差 +0.5…+0.8 s），不是液柱自行斷流；只作診斷。
-6. **identifiability 分級邊界**：F12c 基準的「rtol 1e-7 下 0.07–0.1 路徑噪音」已查明為單段積分跨過注水率斷點，改分段積分後噪音 ~1e-8（`EXP-20260928-F13-C-PIECEWISE-ODE`），分級不再受噪音影響、可重現。現行 canonical 分級：`wetbed_rev_gain` medium（wide span 1.11）、`psi` medium（1.20）、`tau_wet` medium（1.02）——三者的 wide span 本身就落在 Δχ² = 1 邊界附近，判定穩定但資訊量小，不宜當強結論引用。`wetbed_rev_gain` 與 `psi` 皆 `in_fit = no`，dof mismatch 0。
+6. **identifiability 分級邊界**：F12c 基準的「rtol 1e-7 下 0.07–0.1 路徑噪音」已查明為單段積分跨過注水率斷點，改分段積分後噪音 ~1e-8（`EXP-20260928-F13-C-PIECEWISE-ODE`），分級不再受噪音影響、可重現。現行 canonical 分級：`wetbed_rev_gain` medium（wide span 1.07）、`psi` medium（1.17）、`tau_wet` medium（1.04）——三者的 wide span 本身就落在 Δχ² = 1 邊界附近，判定穩定但資訊量小，不宜當強結論引用。`wetbed_rev_gain` 與 `psi` 皆 `in_fit = no`，dof mismatch 0。
+
+---
+
+## [ENTRY] EXP-20261005-STAGE-LSQ
+
+- `entry_id`: `EXP-20261005-STAGE-LSQ`
+- `timestamp`: `2026-10-05 23:26:04 +0800`（canonical summary mtime；四案重擬 23:24 → 23:28）
+- `status`: `active`
+- `theme`: `stage 4/5/7 改 least_squares；multi-start 7 → 3 起點；4:11 第二個局部極小確認`
+
+### Change
+
+- `_chi2_evaluate` 在每個 χ² 項計算處同時記錄帶號殘差，組成 `residuals`（Σ r² ≡ `chi2`）與 `hydraulic_residuals`
+  （Σ r² ≡ `chi2_hydraulic`）；兩者與對應 χ² 不一致（rtol 1e-12）時 raise。
+- 各 stage 共用 `_stage_lsq`（TRF、bounds、前向差分絕對步長 1e-3 dex；線性座標參數改用相對步長）。
+  stage 4 吃 `hydraulic_residuals`，stage 5 / 7 吃 `residuals`；stage 5 的 seed 網格與「seed vs optimizer 取 χ² 較低者」守門不變。
+- `MULTI_START_LHS_N` 6 → 2（加 sibling warm-start 共 3 起點）。理由：`EXP-20261005-HYD-LSQ` 下四案 7 起點皆收斂到同一點；
+  保留多起點作為非單峰的偵測器。`tests/test_fitting_loss.py` 的 LHS 測試改為以 `MULTI_START_LHS_N` 檢查分層。
+
+### Results
+
+| 項目 | 前一版（HYD-LSQ） | 本版 |
+|---|---|---|
+| canonical 單起點 stage 4 / 5 / 7 模擬次數 | 22 / 14 / 22 | 6 / 10 / 8 |
+| canonical 單起點總模擬次數 / wall | 130 / 35 s | 116 / 30 s |
+| 四案重擬 wall | 362 s（7 起點） | 151 s（3 起點；37 / 42 / 41 / 32 s） |
+
+- 四案 winner 對前一版：參數與 CI 相對差 ≤ 5.6e-4（最大 kinu28 `tau_wet`），χ² 差 ≤ 0.001；stage 5 / 7 接受判定不變
+  （canonical Δχ² −2.54 / −6.18）。
+- benchmark 四案狀態不變；summary 與 benchmark reload χ² 逐位元相同；identifiability 分級不變
+  （k 23.19 / 130.76、熱端 U 0.71 / 3.69）。173 個測試通過（skipped 1）。
+- **4:11 第二個局部極小**：新 LHS 起點 0 停在 χ² 264.92（k 4.934e-11、n 2.100、tau_wet 13.20），stage 2 重啟後不動。
+  沿 winner → 此點的 log 空間連線掃 `chi2_hydraulic`：s = 0 為 234.27，單調上升到 s = 0.9 的 268.12，s = 1.0 回落到 265.22，
+  s = 1.2 為 270.12 —— 有約 Δχ² 3 的障壁，是獨立的局部極小（至少沿此線）。winner 不受影響。
+
+### Interpretation
+
+- 全流程模擬次數的累計改善（canonical 單起點）：1343 → 116；四案完整重擬：約 10700 s（F13）→ 151 s。
+- 剩餘成本：每起點約 116 次模擬中，profile CI 28 次（7 格點 × 4 參數，conditional slice）、stage 1/2 約 60 次；
+  單次 coarse 模擬約 0.25 s。
+- **更正 `EXP-20261005-HYD-LSQ` 的 4:11 判讀**：紀錄表資料確有兩個 basin；錯的只有 Powell 的停點位置。
+  只用 3 個起點時，是否捕捉到第二個 basin 取決於 LHS 落點；本案 3 起點中 2 個到 winner，winner 選擇正確。
+
+### Artifacts
+
+- 程式：`pour_over/fitting.py`、`tests/test_fitting_loss.py`（分支 `perf/fit-speed` commit `af201c3`）
+- 四案 `*_flow_fit_summary.csv` 與圖、`data/benchmark_suite_summary.csv`、`data/kinu29_fit_identifiability_slices.csv`、
+  `data/kinu29_thermal_identifiability_slices.csv`、`v60_*.png`
+- session scratchpad：`refit_3start.log`、`post_3start.log`
+
+---
+
+## [ENTRY] EXP-20261005-HYD-LSQ
+
+- `entry_id`: `EXP-20261005-HYD-LSQ`
+- `timestamp`: `2026-10-05 22:31:24 +0800`（canonical summary mtime；四案重擬 22:30 → 22:38）
+- `status`: `active`（`[BASELINE]` 已由 `EXP-20261005-STAGE-LSQ` 取代；本 entry 的機制仍在主模型內）
+- `theme`: `水力 stage 1/2 改用殘差向量的 least_squares；Powell 的模擬次數浪費`
+
+### Change
+
+- 量測（`EXP-20261005-FIT-SPEED` 之後，canonical 單起點、`params_init=None`（`V60Params.for_roast` 預設值）、`compute_ci=True`）：
+  一次擬合 1343 次 `simulate_brew`，其中 stage 1 Powell 佔 1227 次（312 s / 344 s）；stage 2 / 4 / 5 / 7 / CI
+  合計約 140 次。stage 1 只有 3 個參數（log k、log Corey n、log tau_wet）。
+- `_chi2_evaluate` 另回傳 `hydraulic_residuals`：volume `r/σ`、停流、`k_beta` prior、Corey prior（帶號）與 clip 罰項
+  （`√CLIP_PENALTY_CHI2`），並在 `Σr² ≠ chi2_hydraulic`（rtol 1e-12）時 raise。目標函數本身不變。
+- stage 1/2 改為 `scipy.optimize.least_squares`（TRF，log10 空間，bounds 不變）；前向差分絕對步長
+  `HYD_LSQ_DIFF_STEP_DEX = 1e-3`（χ² 路徑噪音 ~1e-8 之上、CI 寬度 0.01–0.3 dex 之下）；
+  `ftol / xtol 1e-6`、`gtol 1e-8`、`max_nfev 100`。stage 2 仍從 stage 1 的解重啟一次作收斂確認，`hydraulic_converged` 判準不變。
+- stage 4 / 5 / 7（1D Powell，各 14–26 次模擬）與 profile CI 未改。
+
+### Results
+
+| 項目 | Powell | least_squares |
+|---|---|---|
+| canonical 單起點 stage 1 / stage 2 模擬次數 | 1227 / 38 | 53 / 8 |
+| canonical 單起點總模擬次數 / wall | 1343 / 344 s | 130 / 35 s |
+| 四案 7 起點重擬 wall | 1567 s（500 / 454 / 209 / 405） | 362 s（57 / 115 / 123 / 67） |
+| canonical 7 起點 χ² span / Corey n 範圍 | 0.004 / 3.125–3.199 | 0.0007 / 3.128–3.130 |
+| 4:11 7 起點 | 5 起點 234.93、2 起點 269.6 / 273.7 | 7 起點 234.926–234.932 |
+
+- 四案 winner 對 Powell 版：參數與 CI 相對差 ≤ 1.1e-3（最大為 kinu28 Corey n 3.4145 → 3.4181），χ² 差 ≤ 0.0008
+  （canonical 9.94303 → 9.94380：`chi2_hydraulic` 4.25878 → 4.25859 較低，總 χ² 差來自 stage 5 U 258.15 → 258.35）。
+- benchmark 四案狀態不變；summary 與 benchmark reload χ² 逐位元相同；identifiability 分級與 span 不變
+  （k 23.19 / 130.75，熱端 U 0.72 / 3.70）；四案 `preprocess_corrections` 不變。
+- 173 個測試通過（skipped 1）。
+
+### Interpretation
+
+- 擬合慢的主因是 optimizer 選擇：χ² 是加權殘差平方和，Powell 只拿到純量，每個方向靠逐點試探；
+  Gauss-Newton 型方法每次迭代只需 n + 1 = 4 次模擬。這是演算法層級的改善，不涉及物理線。
+- **更正 F12c / F13 的 4:11 判讀**：「兩個 basin 是紀錄表資料的多峰結構」不成立。同樣 7 個起點下 least_squares 全部到
+  χ² 234.93，Powell 的 269.6 / 273.7 是 Powell 停在非極小點（停止的機制未查）。
+  本實驗只說明這 7 個起點不存在第二個極小值，未證明整個 bounds 內為單峰。
+  **同日更正（`EXP-20261005-STAGE-LSQ`）**：上面「雙 basin 不成立」的推論錯誤。新 LHS 起點找到第二個局部極小（n 2.10、χ² 264.9，連線障壁 Δχ² ≈ 3）；只有「Powell 的 n 4.4–5.7 停點不是極小值」這一點成立。
+- multi-start 在三個影片案例與 4:11 皆收斂到單一點，7 個起點的資訊價值已低；是否縮減起點數屬擬合協議變更，未動。
+
+### Artifacts
+
+- 程式：`pour_over/fitting.py`（分支 `perf/fit-speed` commit `c3453b0`）
+- 四案 `*_flow_fit_summary.csv` 與 `*_flow_fit{,_residuals,_retention}.png`、`*_thermal_video_check.png`
+- `data/benchmark_suite_summary.csv`、`data/kinu29_fit_identifiability_slices.csv`、`data/kinu29_thermal_identifiability_slices.csv`
+- `v60_simulation.png`、`v60_tds.png`、`v60_grind.png`、`v60_thermal.png`
+- session scratchpad：`count_fit.py` / `count_lsq.log`（模擬次數量測）、`refit_lsq.log` / `refit_lsq2.log`（重擬）
+
+---
+
+## [ENTRY] EXP-20261005-FIT-SPEED
+
+- `entry_id`: `EXP-20261005-FIT-SPEED`
+- `timestamp`: `2026-10-05 18:36:17 +0800`（canonical summary mtime；四案重擬 18:28 → 18:54）
+- `status`: `active`（`[BASELINE]` 已由 `EXP-20261005-HYD-LSQ` 取代；本 entry 的加速機制仍在主模型內）
+- `theme`: `擬合加速：RHS 純量開銷、分段積分步長延續、multi-start 多行程平行；numba 評估後不採用`
+
+### Change
+
+起點量測（canonical calibrated，`SOLVER_COARSE`，t_end 180 s）：單次 `simulate_brew` 1.13 s，RHS 4466 次、
+每次約 250 µs，133 個注水率斷點分段；狀態約 44 維，成本幾乎全是 Python / numpy 純量呼叫開銷，
+不是剛性（max_step 0.5 s 下限約 2200 次 RHS，實際只多約 2 倍）。四案 7 起點重擬約 3 小時，起點串行。
+
+- **B（`core.py` / `params.py`，commit `36cda40`）**：純量路徑以 `min/max`、`math` 取代 `np.clip` /
+  `np.asarray` / `nan_to_num`；`mu_water` 改手寫 Horner（與 `np.polyval` 逐位元相同）並加單筆快取；
+  `pour_start_times()` 積分前算一次；`flow_state` 內同引數的 `k_beta_components`、Darcy 驅動因子、
+  `q_preferential` 只算一次。新增內部 keyword `k_eff(clog_terms=)`、`q_extract(drive=)`、
+  `pour_start_impact(starts=)` 與方法 `q_extract_drive()`，既有呼叫不受影響。
+- **C（`core._solve_piecewise`，commit `c5cbd37`）**：改以 `scipy.integrate.RK45` 物件逐步驅動，
+  下一段 `first_step = min(上一段最後步長提議, max_step, 段長)`；斷點、t 夾限、rtol / atol / max_step 不變。
+  Why：`select_initial_step` 對本系統給 0.02–0.04 s，段內接受步長多為 0.2–0.5 s，每段重啟都要多一次
+  估計呼叫加約 2 步爬升。讀取未文件化屬性 `h_abs`（scipy 1.17.1 驗證）；改名時會 AttributeError，不會悄悄算錯。
+- **A（`fitting.fit_with_multi_start`，commit `f52a11b`）**：起點改用 `ProcessPoolExecutor`（spawn）平行；
+  `max_workers` 預設 `min(len(starts), cpu_count)`，`=1` 走主行程；子行程 BLAS 執行緒設 1；結果依起點 index
+  排序後選 winner。`run_benchmark_suite` 的 case 迴圈不平行（只保留一層平行，避免巢狀超訂）。
+- **D（numba）**：只做可行性評估，未改程式。
+- 重擬：四案 7 起點、stage 4/5/7 與 profile CI，流程同 F13；後處理同 F13（benchmark `refit=False`、
+  水力與熱 identifiability、`python -m pour_over` 展示圖第 1–4 步）。
+
+### Results
+
+| 項目 | 改動前 | 改動後 |
+|---|---|---|
+| 單次 coarse 模擬（canonical） | 1.13 s | B 單獨 0.32 s；B+C 0.23–0.25 s（4.6–5.2×） |
+| RHS 次數 / 每次成本 | 4466 / ~250 µs | 3380（C）/ ~75 µs（B） |
+| 2 起點 multi-start（舊數值路徑，A 驗證） | 1690 s（串行） | 933 s（2 workers，1.81×） |
+| 四案 7 起點完整重擬 | ~10700 s（F13，15:57 → 18:56） | 1567 s（500 / 454 / 209 / 405 s） |
+
+- **B 數值等價**：`simulate_brew` 全部回傳鍵（4 組參數 × COARSE / FINE，含 `standard_v60` 協議）與改動前逐位元相同。
+- **A 數值等價**：canonical 2 起點，`max_workers = 1` 與 `2` 的 χ²、fitted 參數、winner 的全部 V60Params 欄位逐位元相同。
+- **C 不逐位元相同**（步長序列改變）。對 rtol 1e-11 / atol 1e-13 參考解的 χ² 截斷誤差：舊 `+9.9e-5 / +6.6e-4 / −1.4e-3`、
+  新 `+6.3e-4 / −1.3e-3 / −9.0e-4`（calib / k×0.7 / n×1.3）；子代理 20 組隨機參數 RMS 舊 2.39e-3、新 2.34e-3。
+  F13-C 噪音掃描（k·(1 + j·1e-6)，j = 0..20）去趨勢殘差 std 舊 2.34e-8、新 2.30e-8。
+- **重擬結果**：參數移動 ≤ 0.35%（canonical Corey n 3.140 → 3.129），全在 F13 CI 內；χ² 移動 ≤ 0.005；
+  benchmark 四案狀態不變；summary 與 benchmark reload χ² 逐位元相同；identifiability 分級不變
+  （k hard 23.2 / 130.8、`tau_tort` hard 1.31 / 5.36、Corey n medium 0.86 / 3.18、`tau_wet` medium 0.35 / 1.04、
+  `tau_lag` weak；熱端 U medium 0.73 / 3.71，其餘 weak）；四案 `preprocess_corrections` 與前一版相同。
+- **D 評估**：原型把 `mu_water` + `k_eff` 鏈 njit 化，每次 RHS 224.8 → 136.0 µs；同演算法純 Python 為 155.9 µs，
+  即省下的時間約 78% 不需 numba（已由 B 取得）。全 RHS njit 化外推 9–20×（外推，非實測），但需改寫約 950 行、
+  新增 numba / llvmlite 依賴、每個 spawn 子行程多付約 0.6 s 初始化；超出預設 800 行上限，未實作。
+
+### Interpretation
+
+- 慢的原因不是演算法或剛性，而是 Python 呼叫開銷與串行 multi-start；改善全部屬數值執行面，沒有物理線改變。
+- C 改變了 rtol 1e-7 下的步長序列，因此舊 summary 不再逐位元 reload；這是本次必須重擬並更新 `[BASELINE]` 的唯一原因。
+  兩版的截斷誤差同量級，新版不比舊版更不準。
+- canonical start 4 停在 χ² 9.947 / n 3.199，使 n spread 由 0.4% 變 2.4%。差 0.004 χ²，屬 Powell `ftol` 收斂容差，
+  不代表 basin 變化；其餘 6 起點 n 在 3.125–3.136。
+- `_solve_piecewise` docstring 沿用「rtol 1e-7 的截斷誤差與單段 rtol 1e-10 相當」的說法；實測 rtol 1e-7 下 χ² 截斷誤差
+  約 1e-4–1e-2，該敘述可能高估精度，未另查證。
+- 若之後仍需再快數倍，下一步是全 RHS njit 化（單一來源 wrapper 形態），屬 High-risk，需另行確認。
+
+### Artifacts
+
+- 程式：`pour_over/core.py`、`pour_over/params.py`、`pour_over/fitting.py`（分支 `perf/fit-speed`）
+- `data/kinu_29_light/4:12/kinu29_light_20g_flow_fit_summary.csv`、`data/kinu_27_light/4:12/kinu27_light_20g_flow_fit_summary.csv`、
+  `data/kinu_28_light/4:20/kinu28_light_20g_flow_fit_summary.csv`、`data/kinu_29_light/4:11/kinu29_light_20g_flow_fit_summary.csv`
+  與各案 `*_flow_fit{,_residuals,_retention}.png`、`*_thermal_video_check.png`
+- `data/benchmark_suite_summary.csv`、`data/kinu29_fit_identifiability_slices.csv`、`data/kinu29_thermal_identifiability_slices.csv`
+- `v60_simulation.png`、`v60_tds.png`、`v60_grind.png`、`v60_thermal.png`
+- session scratchpad：`refit_all.py` / `refit_all.log`（重擬）、`trunc.py`（截斷誤差）、`d_*.py`（numba 評估）、
+  `equiv_multistart.py` / `equiv.log`（A 等價驗證）
 
 ---
 
