@@ -334,6 +334,15 @@ to, not prediction accuracy.
   retention capacity grows during the brew. On the canonical brew it sits at
   its 10 s lower bound: removing the bound would gain only Δχ² 0.44, and that
   gain comes from the second-pour window above.
+- **TDS is calibrated, not predicted.** Each brew has one TDS measurement and
+  one live extraction parameter (`τ_tort`), so the small TDS errors in the
+  results table carry no degrees of freedom. Fitted `τ_tort` spans 4.1–9.6
+  across brews and does not follow grind size. Two brews of the same beans and
+  grind one day apart can swap `τ_tort` with TDS errors of −0.46 / +0.70 g/L.
+  Applying the mean `τ_tort` of the other brews instead gives errors up to
+  −3.7 g/L, outside the TDS gate. Absolute TDS predictions across grind
+  settings or roast dates are therefore not reliable. TDS scales roughly as
+  `τ_tort^-0.42`, and changing `τ_tort` leaves the flow fit unchanged.
 - **Residuals are not white on an unweighted scale.** The whiteness gate is
   computed on `r/σ`. On unweighted mL residuals, lag-1 is 0.55–0.57 on all
   three video brews.

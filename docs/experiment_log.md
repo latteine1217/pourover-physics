@@ -72,6 +72,7 @@
 | `EXP-20261005-FIT-SPEED` | `2026-10-05 18:36:17 +0800` | 擬合加速（RHS 純量開銷、分段積分步長延續、multi-start 多行程平行）+ 四案重擬 | 定義同日中間版 `[BASELINE]`（`BL-20261005-fit-speed`，已被 `EXP-20261005-HYD-LSQ` 取代）：四案 7 起點重擬由約 10700 s 降到 1567 s；單次 coarse 模擬 1.13 → 約 0.25 s；參數移動 ≤ 0.35%、χ² 移動 ≤ 0.005（rtol 1e-7 截斷誤差量級）；benchmark 狀態與 identifiability 分級不變；numba 評估後不採用 | `pour_over/core.py`, `pour_over/params.py`, `pour_over/fitting.py`, `data/kinu_29_light/4:12/kinu29_light_20g_flow_fit_summary.csv`, `data/kinu_27_light/4:12/kinu27_light_20g_flow_fit_summary.csv`, `data/kinu_28_light/4:20/kinu28_light_20g_flow_fit_summary.csv`, `data/kinu_29_light/4:11/kinu29_light_20g_flow_fit_summary.csv`, `data/benchmark_suite_summary.csv`, `data/kinu29_fit_identifiability_slices.csv`, `data/kinu29_thermal_identifiability_slices.csv` |
 | `EXP-20261005-HYD-LSQ` | `2026-10-05 22:31:24 +0800` | 水力 stage 1/2 由 Powell 改為 least_squares（殘差向量）+ 四案重擬 | 定義同日中間版 `[BASELINE]`（`BL-20261005-hyd-lsq`，已被 `EXP-20261005-STAGE-LSQ` 取代）：canonical 單起點 1343 → 130 次模擬（344 → 35 s）；四案 7 起點重擬 1567 → 362 s；參數與 CI 移動 ≤ 1e-3（相對）、χ² ≤ 0.001；benchmark 與 identifiability 不變；4:11 七起點全部收斂到 χ² 234.93（**同日更正**：「雙 basin 不成立」的推論錯誤，第二個極小值在 n ≈ 2.10，見 `EXP-20261005-STAGE-LSQ`） | `pour_over/fitting.py`, `data/kinu_29_light/4:12/kinu29_light_20g_flow_fit_summary.csv`, `data/kinu_27_light/4:12/kinu27_light_20g_flow_fit_summary.csv`, `data/kinu_28_light/4:20/kinu28_light_20g_flow_fit_summary.csv`, `data/kinu_29_light/4:11/kinu29_light_20g_flow_fit_summary.csv`, `data/benchmark_suite_summary.csv`, `data/kinu29_fit_identifiability_slices.csv`, `data/kinu29_thermal_identifiability_slices.csv` |
 | `EXP-20261005-STAGE-LSQ` | `2026-10-05 23:26:04 +0800` | stage 4/5/7 改 least_squares（總 χ² 殘差向量）+ multi-start 7 → 3 起點 + 四案重擬 | 定義目前的 `[BASELINE]`（`BL-20261005-stage-lsq`）：canonical 單起點 130 → 116 次模擬；四案重擬 362 → 151 s；參數與 CI 移動 ≤ 6e-4（相對）、χ² ≤ 0.001；benchmark 與 identifiability 不變；4:11 第二個局部極小確認存在（n 2.10、χ² 264.9，連線障壁 Δχ² ≈ 3），3 起點已捕捉 | `pour_over/fitting.py`, `tests/test_fitting_loss.py`, 四案 `*_flow_fit_summary.csv`, `data/benchmark_suite_summary.csv`, `data/kinu29_fit_identifiability_slices.csv`, `data/kinu29_thermal_identifiability_slices.csv` |
+| `EXP-20261007-TAU-TORT-TRANSFER` | `2026-10-07 02:24:04 +0800` | 擬合後萃取輸出與 `tau_tort` 跨案可移植性 | 定義已知限制 7：TDS 誤差是 1 參數對 1 觀測的校準殘差；`tau_tort` 跨案 4.15–9.57 且與研磨度不單調，交叉套用時兩案 TDS 誤差超出 gate（+2.47 / −3.74 g/L），同豆 4:11 ↔ 4:12 互換在 gate 內（−0.46 / +0.70） | （scratchpad；repo 無變更） |
 
 ---
 
@@ -200,6 +201,55 @@ gates：`reduced_chi2 ≤ 3.0` | retention `≤ 15%` | 殘差白噪音（r/σ）
 4. **`kinu27/4:12` 分享壺探頭未量到混合平均**（`server_probe_not_mixed_mean`，量測 C_eff 65.2 mL vs 42.4），該案熱端退回單點杯溫、`lambda_server` live（1.51e-3，含分層影響，不作交叉驗證值）。
 5. **出水口熱電偶「斷流」實為濾杯移開時刻**（三案差 +0.5…+0.8 s），不是液柱自行斷流；只作診斷。
 6. **identifiability 分級邊界**：F12c 基準的「rtol 1e-7 下 0.07–0.1 路徑噪音」已查明為單段積分跨過注水率斷點，改分段積分後噪音 ~1e-8（`EXP-20260928-F13-C-PIECEWISE-ODE`），分級不再受噪音影響、可重現。現行 canonical 分級：`wetbed_rev_gain` medium（wide span 1.07）、`psi` medium（1.17）、`tau_wet` medium（1.04）——三者的 wide span 本身就落在 Δχ² = 1 邊界附近，判定穩定但資訊量小，不宜當強結論引用。`wetbed_rev_gain` 與 `psi` 皆 `in_fit = no`，dof mismatch 0。
+7. **TDS 誤差是校準殘差，不是預測精度**：每案 1 個 TDS 觀測對 1 個 live 萃取參數 `tau_tort`，零自由度。`tau_tort` 跨案 4.15–9.57（2.3 倍）且與研磨度不單調；以其他影片案例的幾何平均交叉套用時 TDS 誤差 `+0.91 / +2.47 / −3.74 / +1.27 g/L`（canonical / kinu27 / kinu28 / 4:11），兩案超出 gate。同豆同配方的 4:11 ↔ 4:12 互換誤差 `−0.46 / +0.70 g/L`（`EXP-20261007-TAU-TORT-TRANSFER`）。
+
+---
+
+## [ENTRY] EXP-20261007-TAU-TORT-TRANSFER
+
+- `entry_id`: `EXP-20261007-TAU-TORT-TRANSFER`
+- `timestamp`: `2026-10-07 02:24:04 +0800`（分析執行時間；無 repo artifact）
+- `status`: `active`
+- `theme`: `擬合後的萃取輸出（TDS / EY / pool 消耗）與 tau_tort 的跨案可移植性`
+
+### Change
+
+- 無程式或參數變更。以 `BL-20261005-stage-lsq` 四案 summary reload（`_load_measured_benchmark_state`，`SOLVER_FINE`，
+  凍結 `k_beta_prior_psd` 取自 summary），讀出萃取輸出，再只改 `tau_tort` 以 `evaluate_measured_flow_fit` 重算：
+  (a) fit 值；(b) 其他兩個影片案例 `tau_tort` 的幾何平均（4:11 取三個影片案例）；(c) 0.5× / 2×；(d) 4:11 ↔ 4:12 互換。
+
+### Results
+
+| case | `tau_tort` | TDS 實測 / 模型 [g/L] | 模型 EY（fast + slow） | fast / slow pool 消耗 | 最粗 bin slow 消耗 |
+|---|---|---|---|---|---|
+| `kinu29/4:12` | 7.466 | 11.56 / 11.67 | 14.74%（12.43 + 2.31） | 93% / 45% | 17% |
+| `kinu27/4:12` | 9.572 | 10.11 / 10.26 | 14.18%（12.15 + 2.03） | 87% / 41% | 10% |
+| `kinu28/4:20` | 4.147 | 13.60 / 13.63 | 17.49%（14.68 + 2.81） | 98% / 71% | 28% |
+| `kinu29/4:11` | 8.361 | 11.56 / 11.66 | 14.61%（12.60 + 2.01） | 91% / 50% | 19% |
+
+| case | 交叉 `tau_tort` | TDS 誤差 [g/L] | 0.5× / 2× 的 TDS 誤差 |
+|---|---|---|---|
+| `kinu29/4:12` | 6.300 | +0.91 | +2.86 / −3.53 |
+| `kinu27/4:12` | 5.564 | **+2.47** | +2.97 / −3.26 |
+| `kinu28/4:20` | 8.454 | **−3.74** | +2.25 / −3.63 |
+| `kinu29/4:11` | 6.667 | +1.27 | +3.22 / −3.73 |
+
+- 4:11 ↔ 4:12 互換：4:12 用 8.361 → −0.46 g/L；4:11 用 7.466 → +0.70 g/L。
+- 改 `tau_tort` 時 `chi2_term_volume` 逐位元不變：萃取對水力單向耦合。
+- 局部敏感度 `TDS ∝ tau_tort^≈−0.42`（canonical 0.5× → 2×）。
+
+### Interpretation
+
+- TDS 誤差 0.03–0.14 g/L 是 stage 7 以 `tau_tort` 對單一 TDS 點的校準結果，不能作為萃取 closure 的驗證。
+- 同豆、同研磨度、隔一天的兩次沖煮 `tau_tort` 差 12%，互換誤差在 gate 內；跨研磨度 / 跨日期不可移植（兩案超出 1.44 g/L）。
+- `tau_tort` 名義上是粉粒迂曲度（材料性質），2.3 倍且非單調的漂移表示它在吸收未建模的差異。候選（未驗證）：
+  養豆天數（4/11 → 4/20）、TDS 量測誤差、研磨度改變後 fast/slow 質量分配（`shell_thickness` 固定 0.2 mm）。
+- 鑑別實驗：同一包豆、同一天沖 kinu27/28/29。`tau_tort` 仍漂移 → 研磨度相關的萃取 closure 缺陷；不漂移 → 豆齡或量測。
+- 模型的 EY 約 85% 來自 fast pool，且 fast pool 已消耗 87–98%；未萃出的可萃物集中在粗粉 slow pool 核心。
+
+### Artifacts
+
+- session scratchpad：`tds_probe.py` / `tds_probe.log`、`pair.py` / `pair.log`（repo 無變更）
 
 ---
 
