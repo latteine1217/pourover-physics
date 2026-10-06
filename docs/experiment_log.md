@@ -3432,6 +3432,35 @@ stage 7 bounds 同時記為 0.35 與 0.40）與已被證否的列（Option C dua
 其餘三 case rtol 1e-7 完整重擬」），不再有 `rtol 1e-6` 擬合殘留 |
 | 求解器 | 預設 RK45。LSODA 略快 17% 但末值差 0.28 mL（接近 V_RMSE 可辨識尺度），且模型含 clip/softplus 非光滑項 |
 
+### Fit 回報清單
+
+每次 fitting 或重要改模後至少回報：
+- `k_fit`（含 95% CI）
+- `k_beta_fit`：**凍結值與凍結理由**（2026-09-24 起 Class B，= 該 case PSD
+  prior，不再是 fit 輸出；不回報 CI）
+- `beta_throat`
+- `beta_deposition`
+- `tau_lag`：**凍結值與凍結理由**（2026-09-24 起 Class B = `0.5 s`；不回報 CI）
+- `tau_wet_s`（含 CI）
+- `U_liquid_dripper_W_m2K`：影片時序 case **含 CI**（live）；單點杯溫 case 回報
+  **凍結值與凍結理由**（= prior 中心 `194 W/(m²K)`，單點杯溫不識別 U，不回報 CI）
+- `lambda_server_ambient`：影片時序 case 回報凍結值 `3.7e-4 s⁻¹` 與依據；單點杯溫 case 為 live
+- `sat_rel_perm_exp`（含 CI；2026-09-24 起由 Class D 移入 live fit）
+- `chi2` / `chi2_data` / `chi2_hydraulic` / **`reduced_chi2`**（含 `dof` 與 `n_obs`）
+- **`durbin_watson`** / `residual_lag1` / `runs_z`（殘差是否為白噪音；**以標準化殘差
+  r/σ 計算**，並附報 σ-class ≤ 6 mL 子序列與未加權 mL 殘差的 DW / lag1）
+- 分享壺溫時序 RMSE / bias（進 χ² 的點數；QC 排除時回報旗標）
+- `V_out RMSE`（診斷，不作 gate）
+- `q_out RMSE`（診斷）
+- **`retention_RMSE`** 與末段模型/量測保水
+- `cup_stop_time_error_s`（註明 `stop_operator`：影片 `level` / 紀錄表 `q_threshold`）
+- `cup_temp_error`（時序存在時為診斷，不計分）
+- TDS 誤差（**以量測 `V_out` 為分母**，取最終杯量時刻）
+- `water_balance_residual_ml` / `energy_residual_fraction` / `clip_active_fraction`
+- `stage7_skipped_reason`
+- 這次改善來自哪條物理線
+- 是否引入更不合理的參數
+
 ### Benchmark gates
 
 | Item | Rule |
