@@ -203,7 +203,7 @@ clogging strength and heat capacities), or one of these fixed assumptions:
 | Solute molecular radii | 0.40 / 1.00 nm | Stokes-Einstein diffusivity |
 | Broken-shell thickness | 30 μm (about one coffee cell) | fast diffusion length and fast/slow split |
 | Pore radius | 0.2 × `d32` | capillary retention |
-| CO₂ back-pressure | 1 mm head, decaying over 35 s | early bloom flow |
+| CO₂ back-pressure | 9 / 1 / 4 mm head (light / medium / dark), decaying over 35 s | early bloom flow |
 | Bypass onset / width | 3 mm / 8 mm of ponded head | flow along filter ribs |
 | Extractable fraction `max_EY` | 0.30 / 0.30 / 0.32 (light / medium / dark) | total soluble mass |
 | Bed layers for solute transport | 2 | axial resolution |
