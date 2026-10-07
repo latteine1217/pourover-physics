@@ -1,0 +1,62 @@
+Modelling of coffee extraction during brewing using multiscale methods
+Coffee extraction kinetics in a well mixed system
+Analysing extraction uniformity from porous coffee beds
+Asymptotic Analysis of the Dominant Mechanisms in the Coffee Extraction
+Mathematical Modelling of the Coffee Brewing Process
+A new methodology to estimate the steady-state permeability of roast and ground coffee
+Advancing the engineering understanding of coffee extraction
+Mesoscopic modelling and simulation of espresso coffee extraction
+Water flow and transport in porous media for in-silico espresso
+Mathematical model for coffee extraction based on the volume averaging theory
+Modeling swelling effects during coffee extraction with smoothed particle
+Modelling swelling effects in real espresso extraction using a 1-dimensional
+Influence of particle size distribution on espresso extraction via packed bed compression
+Influence of Flow Rate, Particle Size, and Temperature on Espresso Extraction Kinetics
+Modeling the extraction of espresso components as dispersed flow
+Exploring the link between coffee matrix microstructure and flow properties
+The role of fines in espresso extraction dynamics
+Computer Percolation Models for Espresso Coffee
+Uneven extraction in coffee brewing
+Modeling the effect of flow-induced mechanical erosion during coffee filtration
+Continuum model for extraction and retention in porous media
+Dynamics of liquid infiltration into an espresso bed
+A model for the permeability of coffee pucks validated
+Under pressure: Poroelastic regulation of flow in espresso
+Pour-over coffee: Mixing by a water jet impinging
+Effect of particle size distribution on mass transfer during solid-fluid extraction
+Particle Size Distribution Model for Optimizing Coffee Grind Consistency
+Using ground coffee particle size and distribution to remodel beverage
+An equilibrium desorption model for the strength and extraction yield
+Brew temperature, at fixed brew strength and extraction, has little impact
+Toward a New Brewing Control Chart for the 21st Century
+Caffeine content in filter coffee brews as a function of degree of roast
+Impact of the human factor on the reproducibility of different coffee brewing
+Swelling properties of roasted coffee particles
+Strategies to mitigate electrostatic charging during coffee grinding
+Digital image analysis for contact and shape recognition of coffee particles
+Coffee brewing trajectories from recipe-level records
+area-weighted particle-size peak from image analysis predicts total dissolved solids
+Coffee brewing as a context for teaching porous media flow
+A Minimal Thermo-Fluid Model for Pressure-Driven Extraction in a Moka Pot
+Brewing optimal coffee
+Brewing of filter coffee
+Extraction of single serve coffee capsules
+Investigation of extraction phenomena in continuous circulation coffee brewing
+An improved numerical scheme for coffee Extraction Yield evaluation
+Comparison of nine common coffee extraction methods
+Effect of grinding, extraction time and type of coffee on the physicochemical
+Effect of Pressure on the Particle Size Distribution of Espresso Coffee
+Mass Transfer Effects of Particle Size on Brewing Espresso
+Equations for hydraulic conductivity estimation from particle size distribution
+The hydraulic conductivity of sediments: A pore size perspective
+The referential grain size and effective porosity in the Kozeny
+Fractional packing model for hydraulic conductivity derived from sediment mixtures
+The role of particle shape on hydraulic conductivity of granular soils
+Assessment of empirical formulae for determining the hydraulic conductivity of glass beads
+Centrifuge modeling of one-step outflow tests
+Visualization of microscale phase displacement processes in retention and outflow
+Variability and compatibility in determining soil particle size distribution by sieving
+Graphical comparison of image analysis and laser diffraction particle size
+Study on coffee flavour of various pour
+A comprehensive comparative study among the newly developed Pure Brew method
+Innovative coffee filter cups enhance pour-over coffee quality

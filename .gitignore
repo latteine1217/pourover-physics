@@ -51,3 +51,7 @@ data/**/*.pdf
 
 # Local tooling logs
 .playwright-mcp/
+
+# 文獻回顧的原始 OpenAlex 檢索結果（可由 frontier.md / survey.md 記錄的查詢重新產生）
+docs/literature_review/**/search_results/
+docs/literature_review/**/all_raw.jsonl
