@@ -80,6 +80,9 @@
 | `EXP-20261007-JOINT-EXTRACTION-FIT` | `2026-10-07 18:20:21 +0800` | 跨 brew 聯合萃取擬合（共用 `tau_tort` / shell） | 共用 `tau_tort` 時 χ²_TDS/dof 5.8（四案）/ 6.4（影片三案），案間差異超出 TDS 誤差；加共用 shell 的最佳點 `tau_tort` 撞上界 100，shell 不可辨識；TDS 對研磨刻度非單調，偏離最大的 kinu28 是唯一不同日期的沖煮 | `data/extraction_joint_fit.csv`, `data/extraction_joint_fit_grid.csv` |
 | `EXP-20261007-HGAS-PROFILE` | `2026-10-07 18:35:25 +0800` | CO₂ 背壓 `h_gas_0` 逐 brew profile | 影片拍不到粉床；出液曲線下 `h_gas_0` 不可辨識（三案皆偏好掃描上界、悶蒸窗幾乎無訊號），大背壓的拉力來自補償第二注提早出液；養豆天數假設未被檢驗 | `data/hgas_profile.csv` |
 | `EXP-20261007-CO2-DEGASSING-THEORY` | `2026-10-07 19:04:55 +0800` | 由 PSD 比表面積與脫氣文獻估算 CO₂ 存量與悶蒸釋放 | 研磨損失 ≈ S_v·δ、悶蒸釋放 ≈ S_v·2√(Dt/π)；粉中 CO₂ 約為孔隙體積 1.6–2.5 倍，悶蒸 35 s 釋出 1–3 mL（乾燥 D）或約 20 mL（濕潤假設）；Wang & Lim 研磨損失對應 δ ≈ 50 μm | `tools/co2_degassing.py`, `docs/theory/co2_degassing.md`, `data/co2_degassing_estimates.csv` |
+| `EXP-20261007-JOINT-HYDRAULIC-FIT` | `2026-10-07 19:40:44 +0800` | 跨 brew 共用水力參數聯合擬合 + 留一預測 | 三案共用 `k`、`n` 不被拒絕（Δχ² +0.66 / +1.32，臨界 5.99），研磨刻度間 `k` 差異無法解析；共用 `tau_wet` 被拒絕（Δχ² ≈ 49），LOO 失敗主要來自 `tau_wet` | `tools/joint_hydraulic_fit.py`, `data/joint_hydraulic_fit_data.csv`, `data/joint_hydraulic_fit_prior.csv` |
+| `EXP-20261007-PARAM-COVARIANCE` | `2026-10-07 19:46:16 +0800` | live 參數完整共變異 vs 條件式 CI | 定義已知限制 10：CI slice 對 `k`、`n`、`tau_wet` 低估 1.5–2.4 倍（`k`–`n` 相關 +0.72 / +0.76 / +0.25），熱端與 `tau_tort` ≤ 1.3 倍；`k` marginal 1σ 8–15% | `tools/param_covariance.py`, `data/param_covariance.csv` |
+| `EXP-20261007-PSD-UNCERTAINTY` | `2026-10-07 19:46:17 +0800` | PSD 量測不確定度傳遞（canonical） | PSD 誤差幾乎全由 `tau_tort` 吸收（重擬後 TDS ±0.22 g/L、`tau_tort` 2.14–11.99）；同刻度兩日 PSD 使 `tau_tort` 變 1.52 倍，與跨案 2.2 倍同量級，跨案分散無法與 PSD 雜訊分開 | `tools/psd_uncertainty.py`, `data/psd_uncertainty.csv` |
 
 ---
 
@@ -202,9 +205,142 @@ gates：`reduced_chi2 ≤ 3.0` | retention `≤ 15%` | 殘差白噪音（r/σ）
 4. **`kinu27/4:12` 分享壺探頭未量到混合平均**（`server_probe_not_mixed_mean`，量測 C_eff 65.2 mL vs 42.4），該案熱端退回單點杯溫、`lambda_server` live（1.51e-3，含分層影響，不作交叉驗證值）。
 5. **出水口熱電偶「斷流」實為濾杯移開時刻**（三案差 +0.5…+0.8 s），不是液柱自行斷流；只作診斷。
 6. **identifiability 分級邊界**：F12c 基準的「rtol 1e-7 下 0.07–0.1 路徑噪音」已查明為單段積分跨過注水率斷點，改分段積分後噪音 ~1e-8（`EXP-20260928-F13-C-PIECEWISE-ODE`），分級不再受噪音影響、可重現。現行 canonical 分級：`wetbed_rev_gain` **weak**（wide span 1.00，本版由 medium 降級）、`psi` medium（1.28）、`tau_wet` medium（1.12）——三者的 wide span 本身就落在 Δχ² = 1 邊界附近，判定穩定但資訊量小，不宜當強結論引用。`wetbed_rev_gain` 與 `psi` 皆 `in_fit = no`，dof mismatch 0。
-7. **TDS 誤差是校準殘差，不是預測精度**：每案 1 個 TDS 觀測對 1 個 live 萃取參數 `tau_tort`，零自由度。`tau_tort` 跨案 3.34–7.40（影片三案 2.2 倍）且與研磨度不單調；以其他影片案例的幾何平均交叉套用時 TDS 誤差 `+0.02 / +2.63 / −2.74 / +1.75 g/L`（canonical / kinu27 / kinu28 / 4:11），兩案超出 gate。同豆同研磨的 4:11 ↔ 4:12 互換誤差 `−1.57 / +1.76 g/L`，**也超出 gate**（`EXP-20261007-EXTRACTION-CLOSURE-REWRITE`）。
+7. **TDS 誤差是校準殘差，不是預測精度**：每案 1 個 TDS 觀測對 1 個 live 萃取參數 `tau_tort`，零自由度。`tau_tort` 跨案 3.34–7.40（影片三案 2.2 倍）且與研磨度不單調；以其他影片案例的幾何平均交叉套用時 TDS 誤差 `+0.02 / +2.63 / −2.74 / +1.75 g/L`（canonical / kinu27 / kinu28 / 4:11），兩案超出 gate。同豆同研磨的 4:11 ↔ 4:12 互換誤差 `−1.57 / +1.76 g/L`，**也超出 gate**（`EXP-20261007-EXTRACTION-CLOSURE-REWRITE`）。只換 canonical 的 PSD 為同刻度另一日掃描，`tau_tort` 就變 1.52 倍；跨案分散與 PSD 量測雜訊同量級，無法歸因於萃取 closure（`EXP-20261007-PSD-UNCERTAINTY`）。
 8. **TDS 對 PSD 粒徑尺度敏感，萃取 closure 的殼層與總量是文獻尺度選擇**：可萃質量 81–84% 在 slow pool（速率 ∝ 1/R_core²），同刻度兩日 PSD `d32` 約 20% 的差異直接進入 TDS。shell 30 μm 與 `max_EY` 0.30 取自細胞尺寸與可萃量文獻，與 `tau_tort` 對單一 TDS 簡併（`EXP-20261007-SHELL-THICKNESS-SCAN`）；fast pool 近乎瞬時釋放（0.17 s），比 Moroney 的 surface 時間快，未表示表面溶解與膜傳質。
-9. **k 不由 PSD 預測**：`k` 每案擬合；擬合值不隨 `d32²`，但同刻度 PSD 雜訊（`d32` 約 20%）大於刻度間差異，無法判定（`EXP-20261007-PSD-K-TESTS`）。
+9. **k 不由 PSD 預測**：`k` 每案擬合；擬合值不隨 `d32²`，但同刻度 PSD 雜訊（`d32` 約 20%）大於刻度間差異，無法判定（`EXP-20261007-PSD-K-TESTS`）。影片三案共用同一個 `k`、`n` 不被資料拒絕（Δχ² +1.32，臨界 5.99），現有資料對 PSD → `k` 沒有檢定力（`EXP-20261007-JOINT-HYDRAULIC-FIT`）。
+10. **CI 是條件式下界，水力參數低估約 2 倍**：Gauss-Newton 完整共變異的 marginal 1σ 對 `k`、`sat_rel_perm_exp`、`tau_wet` 是條件式 1σ 的 1.5–2.4 倍（`k`–`n` 相關 +0.72 / +0.76 / +0.25）；熱端與 `tau_tort` ≤ 1.3 倍。`k` marginal 1σ 為 8–15%（`EXP-20261007-PARAM-COVARIANCE`）。
+
+---
+
+## [ENTRY] EXP-20261007-PSD-UNCERTAINTY
+
+- `entry_id`: `EXP-20261007-PSD-UNCERTAINTY`
+- `timestamp`: `2026-10-07 19:46:17 +0800`（`data/psd_uncertainty.csv` 修改時間）
+- `status`: `active`
+- `theme`: `PSD 量測不確定度傳到 canonical 擬合參數與 TDS 的大小`
+
+### Change
+
+- 無模型變更。新增 `tools/psd_uncertainty.py`。canonical `kinu29/4:12` 在六種 PSD 變體下：`own`（基準）、
+  `swap_4:11`（同刻度另一日掃描）、`psd_diameter_scale` ∈ {0.70, 0.85, 1.20, 1.45}（README 所列絕對尺度 ±45%）。
+- 每個變體 (a) 不重擬：baseline 參數固定，`k_beta` 換成新 PSD 的 Class B prior；(b) 重擬：從 baseline 參數單起點
+  跑完整 stage 1/2/4/5/7（`compute_ci=False`），並 assert 擬合後 PSD 路徑與尺度等於設定值。
+
+### Results
+
+| variant | `d32` [μm] | fast 質量分率 | 不重擬 χ²（volume） | 不重擬 TDS 誤差 [g/L] | 重擬 χ²（volume） | 重擬 TDS 誤差 | 重擬 `k` [m²] | 重擬 `tau_tort` |
+|---|---|---|---|---|---|---|---|---|
+| `own` | 1069 | 0.158 | 10.09（4.58） | +0.04 | 10.07（4.58） | +0.04 | 6.75e-11 | 4.95 |
+| `swap_4:11` | 894 | 0.186 | 17.63（4.62） | +1.97 | 10.34（4.55） | +0.13 | 6.71e-11 | 7.50 |
+| `scale_0.70` | 748 | 0.219 | 45.76（4.58） | +4.30 | 11.42（4.54） | +0.22 | 6.75e-11 | 11.99 |
+| `scale_0.85` | 909 | 0.184 | 17.40（4.58） | +1.95 | 10.33（4.56） | +0.12 | 6.75e-11 | 7.33 |
+| `scale_1.20` | 1283 | 0.134 | 19.57（7.07） | −1.87 | 9.57（3.74） | −0.03 | 6.30e-11 | 3.28 |
+| `scale_1.45` | 1550 | 0.112 | 47.98（15.36） | −3.69 | 10.20（3.20） | −0.10 | 5.92e-11 | 2.14 |
+
+- 重擬後 `sat_rel_perm_exp` 3.24–3.62、`tau_wet` 皆 10.0 s（下界）、`U_liquid_dripper` 242–268 W/(m²K)。
+- `own` 的 stage 7 判定 `no_chi2_improvement`（χ² 10.07 vs baseline 10.085）；其餘變體 stage 7 皆執行。
+- `k_beta` 對尺度不變（2514.8），`swap_4:11` 為 2353.0。
+
+### Interpretation
+
+- PSD 誤差幾乎全由 `tau_tort` 吸收：重擬後 TDS 誤差都在 ±0.22 g/L 內，`tau_tort` 隨尺度 2.14–11.99（5.6 倍）。
+  同刻度另一日 PSD 使 `tau_tort` 由 4.95 變 7.50（1.52 倍）；`d32` ±15–20% 對應 1.5 倍。
+- 影片三案 `tau_tort` 3.34–7.40（2.2 倍，已知限制 7）與同刻度兩日 PSD 造成的 1.5 倍同量級，
+  跨案分散**無法與 PSD 量測雜訊分開**；`tau_tort` 跨案不可移植不能直接歸因於萃取 closure。
+- 水力對 PSD 尺度不對稱：尺度 < 1 時不重擬的 volume 項不變（4.58），尺度 > 1 時增加（7.07 / 15.36），重擬 `k` 下降
+  6.7% / 12.4%。不對稱的來源（候選：毛細支撐 `r_pore = ratio · d32`）未查明。
+- 對量測的要求：若要讓 `tau_tort` 成為跨案可比較量，PSD `d32` 的重複性需明顯優於現在的約 20%。
+
+### Artifacts
+
+- `tools/psd_uncertainty.py`, `data/psd_uncertainty.csv`
+
+---
+
+## [ENTRY] EXP-20261007-PARAM-COVARIANCE
+
+- `entry_id`: `EXP-20261007-PARAM-COVARIANCE`
+- `timestamp`: `2026-10-07 19:46:16 +0800`（`data/param_covariance.csv` 修改時間）
+- `status`: `active`
+- `theme`: `live 參數的 Gauss-Newton 完整共變異 vs 現行條件式 CI slice`
+
+### Change
+
+- 無模型變更。新增 `tools/param_covariance.py`：影片三案 baseline 最佳點，對 live 參數的 log10 以中央差分
+  （±0.01 dex）求總 χ² 標準化殘差（含 prior 偽觀測）的 Jacobian，Cov = (JᵀJ)⁻¹；比較 marginal 1σ = √Cov_ii
+  與 conditional 1σ = 1/√(JᵀJ)_ii（其他參數固定，同現行 CI slice）。
+- 腳本初版傳入 `vessel_equivalent_ml=None`，壺溫時序項由 5.15 變成 658（χ² 663 vs baseline 10.085）；改為
+  `MEASURED_VESSEL_EQUIV_ML` 後三案 χ² 與 baseline 逐位相同（10.085 / 6.951 / 15.459），下表為修正後結果。
+
+### Results
+
+marginal / conditional 1σ 比值（marginal 1σ，dex）：
+
+| param | `kinu29/4:12` | `kinu27/4:12` | `kinu28/4:20` |
+|---|---|---|---|
+| `k` | 2.15（0.036） | 1.92（0.045） | 2.17（0.062） |
+| `sat_rel_perm_exp` | 2.38（0.188） | 1.83（0.184） | 1.51（0.192） |
+| `tau_wet_s` | 1.67（0.340，貼下界） | 1.54（0.043） | 2.25（0.106） |
+| 熱端（U 或 `lambda_server`） | 1.03（0.079） | 1.29（0.066） | 1.03（0.083） |
+| `tau_tort` | 1.06（0.071） | 1.00（0.079） | 1.17（0.073） |
+
+- 主要相關：`k`–`n` +0.72 / +0.76 / +0.25；`kinu28` `k`–`tau_wet` −0.74、`tau_wet`–`tau_tort` −0.52；
+  `kinu27` `tau_wet`–`lambda_server` +0.61。
+
+### Interpretation
+
+- 現行 CI slice 對水力參數低估約 1.5–2.4 倍（`k`、`n` 簡併為主因）；熱端與 `tau_tort` 幾乎不受影響（≤ 1.3 倍）。
+- `k` 的 marginal 1σ 為 8–15%。案間 `k` 差異（canonical 6.75e-11 vs `kinu28` 8.06e-11，0.077 dex）約 1.1 倍合併
+  marginal σ，與 `EXP-20261007-JOINT-HYDRAULIC-FIT` 的「共用 `k` 不被拒絕」一致。
+- canonical `tau_wet` 在下界，Gauss 近似不適用，該欄只作參考。
+
+### Artifacts
+
+- `tools/param_covariance.py`, `data/param_covariance.csv`
+
+---
+
+## [ENTRY] EXP-20261007-JOINT-HYDRAULIC-FIT
+
+- `entry_id`: `EXP-20261007-JOINT-HYDRAULIC-FIT`
+- `timestamp`: `2026-10-07 19:40:44 +0800`（`data/joint_hydraulic_fit_prior.csv` 修改時間）
+- `status`: `active`
+- `theme`: `跨 brew 共用水力參數的聯合擬合與留一預測`
+
+### Change
+
+- 無模型變更。新增 `tools/joint_hydraulic_fit.py`：影片三案，熱與萃取參數固定在各案 baseline，比較
+  H0（各案 `k, n, tau_wet`，9 參數）、H1k（共用 `k`，7）、H1kn（共用 `k, n`，5）、H1（三者共用，3），以及以兩案擬合
+  H1 預測第三案（LOO）。`least_squares` TRF、log10 空間、SOLVER_FINE。
+- 兩種目標：`data`（volume + stop_time）與 `prior`（另含 Corey `n` 的 log prior，同正式水力 stage）。
+- 腳本跑的時候傳入 `vessel_equivalent_ml=None`。水力殘差不受影響（canonical volume 項 4.584 與 baseline 逐位相同），
+  事後改為 `MEASURED_VESSEL_EQUIV_ML`，與正式路徑一致。
+
+### Results
+
+| 模型 | Σχ²（`data`） | Δχ² vs H0 | Σχ²（`prior`） | Δχ² vs H0 | 95% 臨界（Δdof） |
+|---|---|---|---|---|---|
+| H0 | 14.48 | — | 15.93 | — | — |
+| H1k | 15.14 | +0.66 | 17.24 | +1.32 | 5.99（2） |
+| H1kn | 15.19 | +0.71 | 17.42 | +1.49 | 9.49（4） |
+| H1 | 64.38 | +49.89 | 64.42 | +48.49 | 12.59（6） |
+
+- 共用 `k`：7.62e-11（`data`）/ 7.06e-11（`prior`）。各案 `tau_wet`（H1kn）12.5 / 16.0 / 52.8 s（`data`）。
+- `data` 目標下 `n` 多次撞上界 6（無 prior 時 `n` 約束弱）。
+- LOO 預測（`prior`）：χ² 32.0 / 14.4 / 83.4、V RMSE 5.5 / 5.2 / 9.4 mL（canonical / kinu27 / kinu28 被留出），
+  各案自擬為 4.6 / 6.7 / 4.7、2.6 / 4.2 / 5.0 mL。
+
+### Interpretation
+
+- 三案（研磨 27 / 28 / 29）共用一個 `k` 與 `n` 不被資料拒絕：研磨刻度間的 `k` 差異在現有量測雜訊內無法解析，
+  與 `EXP-20261007-PSD-K-TESTS` 的結論一致，也代表「PSD → `k`」的跨研磨度檢驗在這三支影片上沒有檢定力。
+- 共用 `tau_wet` 被強烈拒絕（Δχ² ≈ 49），LOO 預測失敗主要來自 `tau_wet`，`kinu28`（唯一不同日期的沖煮）最差。
+  `tau_wet` 的案間差異（10–53 s）承載了各案的結構差異，與已知限制 1 一致。
+- 要檢驗 PSD → `k`，需要研磨度跨距更大的沖煮，或降低 V_out 量測雜訊。
+
+### Artifacts
+
+- `tools/joint_hydraulic_fit.py`, `data/joint_hydraulic_fit_data.csv`, `data/joint_hydraulic_fit_prior.csv`
 
 ---
 

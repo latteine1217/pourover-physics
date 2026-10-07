@@ -243,7 +243,9 @@ All four reference brews (`data/benchmark_suite_summary.csv`):
 A brew passes when its residuals are within measurement noise and show no
 systematic pattern, and its water balance, cup temperature and TDS are within
 set tolerances. Fitted permeabilities agree across the three video brews
-(6.8–8.1e-11 m²).
+(6.8–8.1e-11 m²); a single `k` and Corey `n` shared by all three fits within
+measurement noise, so these data cannot resolve a permeability change between
+grind settings 27 and 29.
 
 All of these numbers are **calibration** errors on the brew each parameter
 set was fitted to, not prediction errors on a new brew.
@@ -270,8 +272,9 @@ measured brew.
   day apart gives TDS errors of −1.6 and +1.8 g/L, and across grind settings
   and roast dates up to 2.7 g/L. Most extractable mass sits in the slow pool,
   whose rate scales with particle size, so TDS inherits the 20% day-to-day
-  scatter of the measured PSD. Bean aging and TDS measurement error are not
-  yet ruled out.
+  scatter of the measured PSD: refitting the reference brew with the other
+  day's PSD changes `τ_tort` by a factor of 1.5, comparable to the spread
+  across brews. Bean aging and TDS measurement error are not yet ruled out.
 - **Grind sweeps.** Changing grind size rescales permeability, but the fines
   clogging is computed from the measured PSD and does not change with a
   simulated grind change. A new grind needs a new PSD measurement for a
@@ -286,7 +289,9 @@ measured brew.
   because the dry glass wall is not modelled. These readings are excluded from
   the fit.
 - **Confidence intervals** are computed with other parameters held fixed, so
-  they understate the true uncertainty.
+  they understate the true uncertainty: by a factor of 1.5–2.4 for `k`,
+  Corey `n` and `τ_wet`, which are correlated, and by less than 1.3 for the
+  thermal parameters and `τ_tort`.
 
 **Not measured, assumed:** outlet diameter, filter paper resistance, paper
 water hold-up, server heat capacity (back-solved), and the absolute PSD scale
