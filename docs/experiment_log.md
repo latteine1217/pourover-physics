@@ -77,6 +77,7 @@
 | `EXP-20261007-HCAP-WET-REMOVAL` | `2026-10-07 15:24:12 +0800` | 移除濕床毛細加驅動頭 `h_cap_wet` 與門檻縮減 + 四案重擬 | 定義前一版 `[BASELINE]`（`BL-20261007-no-hcap-wet`，已被 `EXP-20261007-EXTRACTION-CLOSURE-REWRITE` 取代）：影片三案 Δχ² 皆 +0.07、k +1.8–2.3%，benchmark 狀態與 identifiability 分級不變；`kinu29/4:11` stage 4 改為 accept（`pref_flow_coeff` 1.2e-4）；同批移除死碼 `k_from_d32` | `pour_over/params.py`, `pour_over/core.py`, 四案 `*_flow_fit_summary.csv`, `data/benchmark_suite_summary.csv`, `data/kinu29_fit_identifiability_slices.csv`, `v60_*.png` |
 | `EXP-20261007-PSD-K-TESTS` | `2026-10-07 15:26:05 +0800` | 以現有資料檢驗 PSD 長度尺度跨研磨度傳遞 `k` | 定義已知限制 9：四案擬合 `k` 不隨 `d32²` 但落在 PSD 雜訊內，無法判定；Lee & Chang 2026 repo 的 PSD 與發表 D90 不一致、沖煮資料缺失，外部檢驗未執行 | （scratchpad；repo 無變更） |
 | `EXP-20261007-EXTRACTION-CLOSURE-REWRITE` | `2026-10-07 16:33:07 +0800` | 萃取 closure 依雙孔隙文獻重寫 + 移除殼層→堵塞耦合 + 四案重擬 | 定義目前的 `[BASELINE]`（`BL-20261007-extraction-closure`）：shell 30 μm、fast pool 自由擴散、`tau_tort` 只管 slow、淺焙 `max_EY` 0.30；`tau_tort` 3.34–7.40、benchmark 狀態不變；slow 時間常數 120–380 s；代價是 TDS 對 PSD 尺度敏感，同豆 4:11 ↔ 4:12 互換誤差 ±1.8 g/L 超出 gate | `pour_over/params.py`, `pour_over/psd.py`, `tests/test_extraction_closure.py`, 四案 `*_flow_fit_summary.csv`, `data/benchmark_suite_summary.csv`, `data/kinu29_fit_identifiability_slices.csv`, `v60_*.png` |
+| `EXP-20261007-JOINT-EXTRACTION-FIT` | `2026-10-07 18:20:21 +0800` | 跨 brew 聯合萃取擬合（共用 `tau_tort` / shell） | 共用 `tau_tort` 時 χ²_TDS/dof 5.8（四案）/ 6.4（影片三案），案間差異超出 TDS 誤差；加共用 shell 的最佳點 `tau_tort` 撞上界 100，shell 不可辨識；TDS 對研磨刻度非單調，偏離最大的 kinu28 是唯一不同日期的沖煮 | `data/extraction_joint_fit.csv`, `data/extraction_joint_fit_grid.csv` |
 
 ---
 
@@ -202,6 +203,58 @@ gates：`reduced_chi2 ≤ 3.0` | retention `≤ 15%` | 殘差白噪音（r/σ）
 7. **TDS 誤差是校準殘差，不是預測精度**：每案 1 個 TDS 觀測對 1 個 live 萃取參數 `tau_tort`，零自由度。`tau_tort` 跨案 3.34–7.40（影片三案 2.2 倍）且與研磨度不單調；以其他影片案例的幾何平均交叉套用時 TDS 誤差 `+0.02 / +2.63 / −2.74 / +1.75 g/L`（canonical / kinu27 / kinu28 / 4:11），兩案超出 gate。同豆同研磨的 4:11 ↔ 4:12 互換誤差 `−1.57 / +1.76 g/L`，**也超出 gate**（`EXP-20261007-EXTRACTION-CLOSURE-REWRITE`）。
 8. **TDS 對 PSD 粒徑尺度敏感，萃取 closure 的殼層與總量是文獻尺度選擇**：可萃質量 81–84% 在 slow pool（速率 ∝ 1/R_core²），同刻度兩日 PSD `d32` 約 20% 的差異直接進入 TDS。shell 30 μm 與 `max_EY` 0.30 取自細胞尺寸與可萃量文獻，與 `tau_tort` 對單一 TDS 簡併（`EXP-20261007-SHELL-THICKNESS-SCAN`）；fast pool 近乎瞬時釋放（0.17 s），比 Moroney 的 surface 時間快，未表示表面溶解與膜傳質。
 9. **k 不由 PSD 預測**：`k` 每案擬合；擬合值不隨 `d32²`，但同刻度 PSD 雜訊（`d32` 約 20%）大於刻度間差異，無法判定（`EXP-20261007-PSD-K-TESTS`）。
+
+---
+
+## [ENTRY] EXP-20261007-JOINT-EXTRACTION-FIT
+
+- `entry_id`: `EXP-20261007-JOINT-EXTRACTION-FIT`
+- `timestamp`: `2026-10-07 18:20:21 +0800`（`data/extraction_joint_fit*.csv` 修改時間；含事後修正 `np.float64(...)` 字串格式）
+- `status`: `active`
+- `theme`: `跨 brew 聯合萃取擬合：共用 tau_tort（與 shell）能否同時解釋四個 TDS`
+
+### Change
+
+- 無程式或參數變更。動機：每案 1 個 TDS 對 1 個 `tau_tort` 沒有自由度，萃取 closure 從未被資料檢驗；
+  共用參數才能讓 TDS 約束 closure，並回答 shell 能否被辨識。
+- 方法：水力 / 熱固定在 `BL-20261007-extraction-closure`（萃取對水力單向耦合，已由測試鎖定），
+  每案在 shell {10, 15, 20, 30, 50, 75, 100, 150, 200, 300} μm × log10 `tau_tort` ∈ [0, 2]（21 點）網格上以
+  `SOLVER_FINE` 計算 TDS，log 空間雙線性內插。χ²_TDS = Σ((TDS_model − TDS_obs)/0.72 g/L)²，不加 prior。
+  內插檢查：shell 30 μm、各案自身 `tau_tort` 的內插 TDS 誤差與 baseline 相差 ≤ 0.002 g/L。
+  - M1：共用 `tau_tort`，shell 30 μm；M2：共用 `tau_tort` + 共用 shell。四案與影片三案各做一次。
+- 預先登記判準：M1 χ²/dof ≤ 2 → 共用 `tau_tort` 與資料相容；M2 − M1 Δχ² > 3.84 且 shell CI 兩端有界 →
+  shell 被辨識；否則 shell 不可辨識、案間差異是 TDS 誤差以外的結構。
+
+### Results
+
+| 案例集 | 模型 | χ²_TDS / dof | `tau_tort` | shell [μm] | 殘差 [g/L]（29/4:12、27、28、29/4:11） |
+|---|---|---|---|---|---|
+| 四案 | M1 | `17.42 / 3 = 5.81` | `5.46` | 30（固定） | `−0.40 / +1.35 / −2.31 / +1.31` |
+| 四案 | M2 | `7.52 / 2 = 3.76` | **`100`（上界）** | `101` | `−0.41 / +0.80 / −1.38 / +1.09` |
+| 影片三案 | M1 | `12.85 / 2 = 6.43` | `4.90` | 30（固定） | `+0.09 / +1.81 / −1.84` |
+| 影片三案 | M2 | `4.40 / 1 = 4.40` | **`100`（上界）** | `107` | `−0.03 / +1.15 / −0.98` |
+
+- M2 對 shell 的 profile（四案）：shell 10 → 77 μm 時 χ² 由 20.9 單調降到 10.7，最佳 `tau_tort` 由 3.95 升到 18.5；
+  shell ≥ 108 μm 時 `tau_tort` 釘在 100，χ² 在 150 μm 跳到 87.8。
+- 量測 TDS 與研磨刻度：kinu27 10.1、kinu28 13.6、kinu29 11.6 g/L（非單調）；kinu28 是唯一 4/20 的沖煮，
+  其他為 4/11–4/12。
+
+### Interpretation
+
+- **M1 不成立**：共用一個 `tau_tort` 時四案殘差達 −2.3…+1.3 g/L，超出 σ_TDS 0.72 g/L；案間差異不是 TDS
+  量測誤差（以 canonical 的 TDS ∝ `tau_tort`^−0.39 估算，要用 TDS 誤差解釋 2.2× 的 `tau_tort` 分散，需每案 ±18%、約 ±0.26 °Bx 的獨立誤差，遠大於 0.01 °Bx 解析度折光儀的正常重複性）。
+- **M2 的改善不是物理解**：最佳點 `tau_tort` 撞上界 100（AGENTS.md §6 刻意的失敗訊號），等於關閉 slow pool、
+  以 shell 厚度當可萃總量旋鈕；即使如此 χ²/dof 仍為 3.8。**shell 不可由現有 TDS 辨識。**
+- 偏離最大的 kinu28 TDS 比研磨刻度相鄰的兩案都高，同時是唯一不同日期的沖煮。任何萃取隨研磨度單調變化的
+  closure 都無法擬合這個模式；在這組資料中「研磨度」與「沖煮日期（豆齡）」重疊，無法區分。這把
+  `EXP-20261007-TAU-TORT-TRANSFER` 列出的候選收斂到：豆齡（或該日其他未記錄條件）與 PSD 量測雜訊。
+- 不需新實驗能做的萃取優化到此為止。鑑別實驗：同一包豆、同一天沖 kinu27/28/29，並重複量 PSD。
+
+### Artifacts
+
+- `data/extraction_joint_fit.csv`（模型 × 案例集的 χ²、參數、逐案殘差）
+- `data/extraction_joint_fit_grid.csv`（四案 × 10 shell × 21 `tau_tort` 的 TDS 網格）
+- 腳本：session scratchpad `joint_extraction_fit.py`
 
 ---
 
