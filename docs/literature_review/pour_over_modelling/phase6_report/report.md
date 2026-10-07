@@ -81,6 +81,13 @@ drain time」是否為研究缺口。結論分三部分：
   三個刻度之間的差異。
 - 本專案目前的研磨範圍 d32 只跨約 1.2 倍；Lee & Chang 的 D90 跨約 3 倍。
 
+### 2.6 CO₂ 脫氣：動力學已知，對萃取的影響未量化（2026-10-07 補充檢索）
+- [@smrke2018time]：淺焙全豆 400 h 釋放 2.5–2.8 mg/g，Weibull λ ≈ 715 h（35 °C）；研磨後最多 75% 的殘留氣體
+  在 90 s 內釋放；部分 CO₂ 為結合態，接觸水才釋放。
+- [@shimoni2000degassing]：研磨粉 CO₂ 擴散係數 10⁻¹⁴–10⁻¹⁵ m²/s，Arrhenius 活化能 73.6 kJ/mol。
+- [@anderson2003diffusion]、[@wang2014effect]：研磨粉擴散動力學、烘焙條件與研磨損失。
+- CO₂ 對萃取率的影響找不到同儕審查的量化研究。
+
 ## 3. 對本專案現況的含意
 
 | 項目 | 現況 | 文獻對照 |
@@ -103,6 +110,7 @@ drain time」是否為研究缺口。結論分三部分：
 | G4 影像 PSD 重複性與其傳遞 | open |
 | G5 手沖熱耦合 | open，小眾 |
 | G6 注水擾動 | open，不建議作為主題 |
+| G7 CO₂ / 養豆天數對萃取與流動 | open（動力學已知，萃取效應未量化） |
 
 **主張 A（建議）**：在重力驅動的 V60 手沖中，以影片逐格量測出液曲線與溫度，檢驗「單一床層滲透率尺度
 + 量測 PSD 的物理 closure」能否在不重擬合下預測不同研磨度的整條 V_out(t)；並在同一資料上與逐研磨擬合的
@@ -126,6 +134,8 @@ paper 或 JOSS。
 ## 5. 限制
 
 - 檢索只用 OpenAlex（Semantic Scholar 被限流），未查 Google Scholar、Scopus、專利，也未查中日韓文獻。
+- 2.6 節 CO₂ 補充檢索：[@smrke2018time] 讀全文（ZHAW 開放版）；[@shimoni2000degassing] 只讀摘要；
+  [@anderson2003diffusion] 與 [@wang2014effect] 摘要不可得，其數字轉引自 Smrke 2018 的文獻回顧。
 - 只讀到摘要的有：[@siregar2026coffee]、[@park2025pour]、[@corrochano2014new] 的期刊版
   （數字取自 thesis）。
 - [@cameron2020systematically] 讀的是缺圖的 accepted manuscript；[@lee2023uneven] 讀的是 arXiv 版。

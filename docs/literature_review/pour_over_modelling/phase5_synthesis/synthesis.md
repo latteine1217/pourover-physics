@@ -61,6 +61,8 @@ Date: 2026-10-07 | 基於 `phase3_deep_dive/deep_dive.md`（13 篇）與 `phase4
   592 μm D90 仍單調上升。手沖的低壓頭可能讓這個臨界點落在更細的研磨。
 - **注水擾動**：Park 2025 顯示水柱引發 avalanche 混合；Santanatoglia 2023 顯示注水方式是重現性的
   主要變因。所有模型（含本專案）都把它當成固定的有效參數或忽略。
+- **CO₂ 與萃取**：脫氣動力學已量化（Smrke 2018、Shimoni & Labuza 2000、Anderson 2003、Wang & Lim 2014），
+  但 CO₂ 或養豆天數對萃取率的量化影響沒有同儕審查研究，只有業界經驗（見 gaps G7）。
 
 ## 4. 對本專案的意義
 1. 「首次以 measured PSD 預測跨研磨度的手沖排水」**已不成立**：Lee & Chang 2026 以內插方式做了
