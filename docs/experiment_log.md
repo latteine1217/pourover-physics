@@ -79,6 +79,7 @@
 | `EXP-20261007-EXTRACTION-CLOSURE-REWRITE` | `2026-10-07 16:33:07 +0800` | 萃取 closure 依雙孔隙文獻重寫 + 移除殼層→堵塞耦合 + 四案重擬 | 定義目前的 `[BASELINE]`（`BL-20261007-extraction-closure`）：shell 30 μm、fast pool 自由擴散、`tau_tort` 只管 slow、淺焙 `max_EY` 0.30；`tau_tort` 3.34–7.40、benchmark 狀態不變；slow 時間常數 120–380 s；代價是 TDS 對 PSD 尺度敏感，同豆 4:11 ↔ 4:12 互換誤差 ±1.8 g/L 超出 gate | `pour_over/params.py`, `pour_over/psd.py`, `tests/test_extraction_closure.py`, 四案 `*_flow_fit_summary.csv`, `data/benchmark_suite_summary.csv`, `data/kinu29_fit_identifiability_slices.csv`, `v60_*.png` |
 | `EXP-20261007-JOINT-EXTRACTION-FIT` | `2026-10-07 18:20:21 +0800` | 跨 brew 聯合萃取擬合（共用 `tau_tort` / shell） | 共用 `tau_tort` 時 χ²_TDS/dof 5.8（四案）/ 6.4（影片三案），案間差異超出 TDS 誤差；加共用 shell 的最佳點 `tau_tort` 撞上界 100，shell 不可辨識；TDS 對研磨刻度非單調，偏離最大的 kinu28 是唯一不同日期的沖煮 | `data/extraction_joint_fit.csv`, `data/extraction_joint_fit_grid.csv` |
 | `EXP-20261007-HGAS-PROFILE` | `2026-10-07 18:35:25 +0800` | CO₂ 背壓 `h_gas_0` 逐 brew profile | 影片拍不到粉床；出液曲線下 `h_gas_0` 不可辨識（三案皆偏好掃描上界、悶蒸窗幾乎無訊號），大背壓的拉力來自補償第二注提早出液；養豆天數假設未被檢驗 | `data/hgas_profile.csv` |
+| `EXP-20261007-CO2-DEGASSING-THEORY` | `2026-10-07 19:04:55 +0800` | 由 PSD 比表面積與脫氣文獻估算 CO₂ 存量與悶蒸釋放 | 研磨損失 ≈ S_v·δ、悶蒸釋放 ≈ S_v·2√(Dt/π)；粉中 CO₂ 約為孔隙體積 1.6–2.5 倍，悶蒸 35 s 釋出 1–3 mL（乾燥 D）或約 20 mL（濕潤假設）；Wang & Lim 研磨損失對應 δ ≈ 50 μm | `tools/co2_degassing.py`, `docs/theory/co2_degassing.md`, `data/co2_degassing_estimates.csv` |
 
 ---
 
@@ -204,6 +205,47 @@ gates：`reduced_chi2 ≤ 3.0` | retention `≤ 15%` | 殘差白噪音（r/σ）
 7. **TDS 誤差是校準殘差，不是預測精度**：每案 1 個 TDS 觀測對 1 個 live 萃取參數 `tau_tort`，零自由度。`tau_tort` 跨案 3.34–7.40（影片三案 2.2 倍）且與研磨度不單調；以其他影片案例的幾何平均交叉套用時 TDS 誤差 `+0.02 / +2.63 / −2.74 / +1.75 g/L`（canonical / kinu27 / kinu28 / 4:11），兩案超出 gate。同豆同研磨的 4:11 ↔ 4:12 互換誤差 `−1.57 / +1.76 g/L`，**也超出 gate**（`EXP-20261007-EXTRACTION-CLOSURE-REWRITE`）。
 8. **TDS 對 PSD 粒徑尺度敏感，萃取 closure 的殼層與總量是文獻尺度選擇**：可萃質量 81–84% 在 slow pool（速率 ∝ 1/R_core²），同刻度兩日 PSD `d32` 約 20% 的差異直接進入 TDS。shell 30 μm 與 `max_EY` 0.30 取自細胞尺寸與可萃量文獻，與 `tau_tort` 對單一 TDS 簡併（`EXP-20261007-SHELL-THICKNESS-SCAN`）；fast pool 近乎瞬時釋放（0.17 s），比 Moroney 的 surface 時間快，未表示表面溶解與膜傳質。
 9. **k 不由 PSD 預測**：`k` 每案擬合；擬合值不隨 `d32²`，但同刻度 PSD 雜訊（`d32` 約 20%）大於刻度間差異，無法判定（`EXP-20261007-PSD-K-TESTS`）。
+
+---
+
+## [ENTRY] EXP-20261007-CO2-DEGASSING-THEORY
+
+- `entry_id`: `EXP-20261007-CO2-DEGASSING-THEORY`
+- `timestamp`: `2026-10-07 19:04:55 +0800`（`data/co2_degassing_estimates.csv` 修改時間）
+- `status`: `active`
+- `theme`: `由 PSD 比表面積與脫氣文獻估算咖啡粉 CO₂ 存量與悶蒸釋放量（理論，不改模型）`
+
+### Change
+
+- 無模型變更。新增 `tools/co2_degassing.py` 與推導文件 `docs/theory/co2_degassing.md`。
+- 輸入：Smrke et al. 2018（淺焙中速全豆 Weibull λ 715 h、k 0.842、M∞ 5.07 mg/g @ 35 °C）、Shimoni & Labuza 2000
+  （研磨粉 D 10⁻¹⁴–10⁻¹⁵ m²/s、Eₐ 73.6 kJ/mol）、Wang & Lim 2014 研磨損失（轉引）、各案 measured PSD 與 δ = 30 μm。
+- 推導：研磨損失 = 破壁殼層體積分率 ≈ S_v·δ（S_v = 6/d32）；悶蒸釋放 = 完整細胞核心 Crank 球形擴散，短時間 ≈
+  S_v·2√(Dt/π)；D 兩情境（乾燥：Shimoni D 以 Eₐ 換算到 92 °C；濕潤：模型 slow pool 溶質 D_eff，僅作量級參考）。
+
+### Results
+
+- 換算：20 g 粉中每 1 mg/g CO₂ ≈ 13.7 mL（92 °C、1 atm）；床層孔隙約 20.8 mL。
+- 研磨損失（δ = 30 μm）：0.158 / 0.172 / 0.184（canonical / kinu27 / kinu28）；一階 S_v·δ 偏高約 7%。
+  δ = 50 μm 時 0.250 / 0.271 / 0.289。
+- 研磨後粉中自由 CO₂（canonical）：23 °C 儲存第 7 / 15 天 3.82 / 3.46 mg/g（52 / 47 mL）；35 °C 3.18 / 2.43 mg/g（43 / 33 mL）。
+- 悶蒸 35 s 完整細胞釋放（canonical，23 °C，第 7 天）：乾燥 D_ref 10⁻¹⁵ 0.018（1.0 mL）、10⁻¹⁴ 0.057（3.0 mL）；
+  濕潤 0.417（21.7 mL）。kinu28 較 canonical 多 14–15%（乾燥）、28%（濕潤）。
+- 短時近似在乾燥情境與完整解相差 ≤ 6%；濕潤情境高估 34–93%，該情境只用完整級數。
+
+### Interpretation
+
+- 比表面積線性進入研磨損失與短時悶蒸釋放。
+- 悶蒸氣體來源無法由現有資料區分：乾燥 D 下完整細胞只釋出 1–3 mL，小於乾粉床被擠出的孔隙空氣（約 21 mL）；
+  濕潤情境約 20 mL；結合態 CO₂（約 20–48 mL）釋放速度未知。
+- 第 7 → 15 天：乾燥情境悶蒸氣體差 < 1 mL，濕潤情境差 2–4 mL；kinu28 較細且較老，兩效應方向相反。
+- Wang & Lim 粗研磨損失 26–30% 對應本案 δ ≈ 50 μm（研磨後數分鐘的乾燥擴散穿透約 1 μm，可忽略），提示破壁層
+  可能約 1.5–2 個細胞深；Wang 的粗研磨粒徑未確認，此對照不改模型的 δ。
+- 可證偽預測與所需量測見 `docs/theory/co2_degassing.md` §5。
+
+### Artifacts
+
+- `tools/co2_degassing.py`, `docs/theory/co2_degassing.md`, `data/co2_degassing_estimates.csv`
 
 ---
 
