@@ -24,6 +24,7 @@ import numpy as np
 from pour_over import PourProtocol, RoastProfile, V60Params, simulate_brew
 from pour_over.constant import K_B, SOLUTE_RADIUS_FAST_M, SOLUTE_RADIUS_SLOW_M
 from pour_over.params import EXTRACTION_FIT_SPEC
+from pour_over.psd import DEFAULT_SHELL_THICKNESS_MM
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CANONICAL_BINS_CSV = PROJECT_ROOT / "data/kinu_29_light/4:12/kinu29_psd_bins.csv"   # F10：canonical = kinu29 4:12
@@ -55,9 +56,19 @@ class TestBinGeometry(unittest.TestCase):
         self.assertTrue(np.all(self.p.ext_bin_shell_depth_m <= self.p.ext_bin_radius_m + 1e-18))
         self.assertTrue(np.all(self.p.ext_bin_core_radius_m >= 0.0))
 
-    def test_shell_depth_is_not_constant_across_bins(self):
-        """細 bin 的 δ 必須被半徑夾住，否則 bin-resolved 幾何被抹平成常數。"""
-        self.assertGreater(float(np.ptp(self.p.ext_bin_shell_depth_m)), 1e-6)
+    def test_shell_depth_is_min_of_shell_thickness_and_radius(self):
+        """δ_i ≡ min(shell_thickness, R_i)：不得有任何額外的絕對 floor（AUD-3）。"""
+        np.testing.assert_allclose(
+            self.p.ext_bin_shell_depth_m,
+            np.minimum(self.p.shell_thickness, self.p.ext_bin_radius_m),
+            rtol=1e-12,
+        )
+
+    def test_shell_thickness_has_a_single_source(self):
+        """params 與 psd 的殼層厚度必須是同一個常數（PSD 表的 shell 欄與模型同義）。"""
+        self.assertAlmostEqual(
+            V60Params().shell_thickness, DEFAULT_SHELL_THICKNESS_MM * 1e-3, places=15
+        )
 
     def test_core_radius_floor_only_acts_where_slow_pool_is_empty(self):
         """R_core 的數值 floor 不得改變任何有質量的 bin。"""
@@ -100,7 +111,7 @@ class TestReleaseRates(unittest.TestCase):
         Why: 這個 O(1) 因子與 `tau_tort` 完全簡併，靜默改動會讓 prior 中心 5.0
              與模型不同尺度，而 loss 不會有任何跡象。
         """
-        whole_sphere = np.pi ** 2 * self.p.effective_diffusivity(self.T, slow=False) \
+        whole_sphere = np.pi ** 2 * self.p.solute_diffusivity(self.T, slow=False) \
             / self.p.ext_bin_shell_depth_m ** 2
         np.testing.assert_allclose(
             self.p.lambda_fast_bins(self.T), whole_sphere / 4.0, rtol=1e-12
@@ -113,12 +124,16 @@ class TestReleaseRates(unittest.TestCase):
         order = np.argsort(core)
         self.assertTrue(np.all(np.diff(lam[order]) < 0.0))
 
-    def test_lambda_scales_inversely_with_tau_tort(self):
-        """λ ∝ 1/τ_tort：τ_tort 是唯一的速率旋鈕，且只以倒數進入。"""
+    def test_tau_tort_acts_only_on_the_slow_pool(self):
+        """τ_tort 是完整細胞壁的阻擋：λ_slow ∝ 1/τ_tort，λ_fast 與之無關。
+
+        Why: fast 池是對孔隙液開放的破壁細胞層，溶質以自由溶液擴散離開；
+             把細胞壁阻擋也套在 fast 池，等於宣稱破壁層仍有完整細胞壁。
+        """
         p1 = dataclasses.replace(self.p, tau_tort=2.0)
         p2 = dataclasses.replace(self.p, tau_tort=8.0)
         np.testing.assert_allclose(
-            p1.lambda_fast_bins(self.T), 4.0 * p2.lambda_fast_bins(self.T), rtol=1e-12
+            p1.lambda_fast_bins(self.T), p2.lambda_fast_bins(self.T), rtol=1e-12
         )
         np.testing.assert_allclose(
             p1.lambda_slow_bins(self.T), 4.0 * p2.lambda_slow_bins(self.T), rtol=1e-12
@@ -179,6 +194,12 @@ class TestPoolMassSplit(unittest.TestCase):
         other = _canonical_params(tau_tort=37.0)
         self.assertAlmostEqual(other.M_fast_0, self.p.M_fast_0, places=12)
         self.assertAlmostEqual(other.M_slow_0, self.p.M_slow_0, places=12)
+
+    def test_shell_thickness_does_not_reach_hydraulics(self):
+        """萃取殼層厚度不得改變任何堵塞 closure（萃取對水力單向耦合）。"""
+        thick = _canonical_params(shell_thickness=200e-6)
+        for got, ref in zip(self.p.clogging_bin_profiles(), thick.clogging_bin_profiles()):
+            np.testing.assert_allclose(got, ref, rtol=1e-12)
 
 
 @unittest.skipUnless(CANONICAL_BINS_CSV.exists(), "canonical PSD bins CSV 不存在")

@@ -119,26 +119,26 @@ conserved exactly (the reported residual is about 1e-13 mL).
 
 - **Per size bin.** The measured PSD is kept as individual size bins, each
   with its own surface area and particle size.
-- **Fast and slow pools.** In each bin, the outer 200 μm shell holds the fast
-  pool and the core inside it holds the slow pool. Both release by diffusion
-  with the same effective diffusivity (only the assumed solute radius
-  differs), so the split is a two-depth geometry rather than the
-  broken-cell / intact-cell mechanism of the coffee literature, whose broken
-  layer is about one 20–40 μm cell deep. Both pools follow the long-time limit
-  of diffusion out of a sphere:
-  - shell: `λ_fast = π²·D_eff/(2δ)²`;
-  - core: `λ_slow = π²·D_eff/R_core²`.
+- **Fast and slow pools.** In each bin, the outer 30 μm shell (about one
+  coffee cell) holds the fast pool: cells broken by grinding, open to the pore
+  liquid, releasing by free-solution diffusion. The core holds the slow pool:
+  solute must cross intact cell walls, and that hindrance is the fitted
+  factor `τ_tort`. Both pools follow the long-time limit of diffusion out of
+  a sphere:
+  - shell: `λ_fast = π²·D/(2δ)²`;
+  - core: `λ_slow = π²·(D/τ_tort)/R_core²`.
 - **Saturation.** Release slows as the liquid approaches the solubility
   ceiling `C_sat(T)`.
 - **Temperature.** Diffusivity follows Stokes-Einstein,
-  `D_eff = k_B T / (6π μ(T) r) / τ_tort`. This is the only temperature effect
-  on release rates.
+  `D = k_B T / (6π μ(T) r)`. This is the only temperature effect on release
+  rates.
 - **Transport.** Solute is carried through two stacked layers of the bed into
   the outflow.
 
-Total extractable mass is fixed by roast (22% of dose for light roast). The
-model has no sorption equilibrium, so all of it is reachable given enough
-time. The only fitted extraction parameter is the tortuosity `τ_tort`, and
+Total extractable mass is fixed by roast (30% of dose for light and medium
+roast). The model has no sorption equilibrium, so all of it is reachable given
+enough time. The only fitted extraction parameter is the kernel hindrance
+`τ_tort`, and
 with one TDS reading per brew it is degenerate with the shell thickness and
 the extractable fraction.
 
@@ -201,11 +201,11 @@ clogging strength and heat capacities), or one of these fixed assumptions:
 |---|---|---|
 | Solubility ceilings `C_sat` fast / slow | 220 / 60–100 g/L by roast | limit on dissolved concentration |
 | Solute molecular radii | 0.40 / 1.00 nm | Stokes-Einstein diffusivity |
-| Broken-shell thickness | 200 μm | fast diffusion length and fast/slow split |
+| Broken-shell thickness | 30 μm (about one coffee cell) | fast diffusion length and fast/slow split |
 | Pore radius | 0.2 × `d32` | capillary retention |
 | CO₂ back-pressure | 1 mm head, decaying over 35 s | early bloom flow |
 | Bypass onset / width | 3 mm / 8 mm of ponded head | flow along filter ribs |
-| Extractable fraction `max_EY` | 0.22 / 0.30 / 0.32 (light / medium / dark) | total soluble mass |
+| Extractable fraction `max_EY` | 0.30 / 0.30 / 0.32 (light / medium / dark) | total soluble mass |
 | Bed layers for solute transport | 2 | axial resolution |
 | Server cooling rate | 3.7e-4 s⁻¹ | estimated from wall convection and radiation |
 
@@ -216,11 +216,11 @@ Reference brew `kinu29/4:12`
 
 | Fitted parameter | Value | 95% CI |
 |---|---|---|
-| permeability `k` | 6.59e-11 m² | [6.50e-11, 6.88e-11] |
-| Corey `n` | 3.19 | [2.19, 4.29] |
-| wetting time `τ_wet` | 10.0 s (at lower bound) | up to 16.3 |
-| dripper heat transfer `U` | 258 W/(m²K) | [184, 362] |
-| tortuosity `τ_tort` | 7.47 | — |
+| permeability `k` | 6.75e-11 m² | [6.65e-11, 7.04e-11] |
+| Corey `n` | 3.25 | [2.25, 4.38] |
+| wetting time `τ_wet` | 10.0 s (at lower bound) | up to 16.1 |
+| dripper heat transfer `U` | 250 W/(m²K) | [183, 362] |
+| kernel hindrance `τ_tort` | 4.95 | — |
 
 | Fit quality | Value |
 |---|---|
@@ -228,22 +228,22 @@ Reference brew `kinu29/4:12`
 | stop-time error | +0.2 s |
 | server temperature RMSE | 0.9 °C |
 | cup temperature error | −0.4 °C |
-| TDS error | +0.11 g/L (measured 11.56 g/L) |
-| reduced χ² | 0.36 |
+| TDS error | +0.04 g/L (measured 11.56 g/L) |
+| reduced χ² | 0.37 |
 
 All four reference brews (`data/benchmark_suite_summary.csv`):
 
 | Brew | Data source | reduced χ² | TDS error | Benchmark |
 |---|---|---|---|---|
-| Kinu 29, 4/12 (reference) | video | 0.36 | +0.11 g/L | pass |
-| Kinu 27, 4/12 | video | 0.37 | +0.14 g/L | fails; residuals show a systematic pattern |
-| Kinu 28, 4/20 | video | 0.50 | +0.03 g/L | pass |
-| Kinu 29, 4/11 | hand log | 8.65 | +0.10 g/L | fails; hand-logged volumes read high |
+| Kinu 29, 4/12 (reference) | video | 0.37 | +0.04 g/L | pass |
+| Kinu 27, 4/12 | video | 0.39 | +0.12 g/L | fails; residuals show a systematic pattern |
+| Kinu 28, 4/20 | video | 0.51 | −0.03 g/L | pass |
+| Kinu 29, 4/11 | hand log | 8.74 | +0.10 g/L | fails; hand-logged volumes read high |
 
 A brew passes when its residuals are within measurement noise and show no
 systematic pattern, and its water balance, cup temperature and TDS are within
 set tolerances. Fitted permeabilities agree across the three video brews
-(6.6–7.8e-11 m²).
+(6.8–8.1e-11 m²).
 
 All of these numbers are **calibration** errors on the brew each parameter
 set was fitted to, not prediction errors on a new brew.
@@ -265,11 +265,13 @@ measured brew.
 - **Absolute TDS for a new grind or a different roast date.** Each brew has
   one TDS reading and one fitted extraction parameter, so the TDS match above
   is not evidence that extraction is predicted correctly. The fitted
-  tortuosity varies by a factor of 2.3 across brews and does not follow grind
-  size. Reusing it between two brews of the same beans and grind one day apart
-  predicts TDS within 0.7 g/L. Across grind settings and roast dates, the
-  error reaches 3.7 g/L. The cause (bean aging, TDS measurement, or a missing
-  grind effect in extraction) is still being tested.
+  kernel hindrance `τ_tort` spans 3.3–7.4 across brews and does not follow
+  grind size. Reusing it between two brews of the same beans and grind one
+  day apart gives TDS errors of −1.6 and +1.8 g/L, and across grind settings
+  and roast dates up to 2.7 g/L. Most extractable mass sits in the slow pool,
+  whose rate scales with particle size, so TDS inherits the 20% day-to-day
+  scatter of the measured PSD. Bean aging and TDS measurement error are not
+  yet ruled out.
 - **Grind sweeps.** Changing grind size rescales permeability, but the fines
   clogging is computed from the measured PSD and does not change with a
   simulated grind change. A new grind needs a new PSD measurement for a

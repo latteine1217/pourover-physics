@@ -30,7 +30,12 @@ import math
 import statistics
 from pathlib import Path
 
-DEFAULT_SHELL_THICKNESS_MM = 0.2
+DEFAULT_SHELL_THICKNESS_MM = 0.03
+# 破壁殼層厚度 [mm]，`params.V60Params.shell_thickness` 的唯一來源。
+# What: 研磨時細胞壁破裂、溶質直接對孔隙液開放的表層深度。
+# Why:  咖啡細胞約 20–40 μm（Moroney et al. 2019），破壁層約一層細胞深；取 30 μm。
+#       舊值 0.2 mm（5–10 層細胞）讓 canonical fast pool 佔可萃質量 69%，與雙孔隙
+#       文獻的機制不符（EXP-20261007-EXTRACTION-CLOSURE-REWRITE）。
 
 # What: 模型使用的固定 bin 邊界 [mm]。
 # Why:  最細兩個 bin（0.075–0.125、0.125–0.25）覆蓋 fines，是堵塞閉合的主要來源；

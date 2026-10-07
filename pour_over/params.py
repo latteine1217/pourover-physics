@@ -33,7 +33,7 @@ from .constant import (
     SOLUTE_RADIUS_FAST_M, SOLUTE_RADIUS_SLOW_M,
     V60Constant,
 )
-from .psd import shell_accessibility_fraction_mm
+from .psd import DEFAULT_SHELL_THICKNESS_MM, shell_accessibility_fraction_mm
 
 # ── 萃取端可擬參數規格（F3 → F4 介面）────────────────────────────────────────
 # What: `(參數名, 變換, 下界, 上界, prior 中心, prior σ [dex])`。
@@ -45,10 +45,9 @@ from .psd import shell_accessibility_fraction_mm
 #       bounds [1, 100] 的下界 1 是硬物理上界（D_eff 不可能超過自由水 D），
 #       上界 100 刻意放寬到不合理區，讓「擬合把它推到 100」成為一個
 #       **可觀測的失敗訊號**，而不是被 bound 悄悄夾住。
-#       尺度前提（2026-09-24）：`lambda_fast_bins` 已改採內面封閉殼層約定
-#       `π²D/(2δ)²`。prior 中心 5.0 只有在這個約定下才與文獻 2–10 同尺度；
-#       若有人改回整球約定 `π²D/δ²`，此處必須同步 ×4，否則 prior 會系統性偏移。
-#       fit 起點：`6.4`（F3 在整球約定下定位的 TDS 命中點 25.5 ÷ 4）。
+#       作用範圍（2026-10-07）：`tau_tort` 只作用於 slow pool（`lambda_slow_bins`）；
+#       fast pool 用自由溶液 D，不受 prior 影響。shell 30 μm、max_EY 0.30 下四案
+#       TDS 命中值落在 3.3–7.6，與 prior 中心同量級（EXP-20261007-EXTRACTION-CLOSURE-REWRITE）。
 EXTRACTION_FIT_SPEC: list[tuple[str, str, float, float, float, float]] = [
     ("tau_tort", "log10", 1.0, 100.0, 5.0, 0.35),
 ]
@@ -176,7 +175,7 @@ class RoastProfile:
 
     # ── 溶質可萃取性 ───────────────────────────────────────────────────────
     max_EY: float
-    # 最大萃取率；淺焙細胞壁緻密（0.22），深焙焦糖化破壁（0.30）
+    # 總可萃取溶質比例；淺焙與中焙 0.30（Moroney 2016、Liang 2021），深焙 0.32
 
     alpha_EY: float
     # k-M 聯動靈敏度；淺焙硬豆磨細效益有限（0.10），深焙較高（0.20）
@@ -219,7 +218,7 @@ class RoastProfile:
 
 RoastProfile.LIGHT = RoastProfile(
     name              = "light",
-    max_EY            = 0.22,
+    max_EY            = 0.30,   # Moroney 2016：90 °C 可萃量 28–32%；Liang 2021 E_max 0.3
     alpha_EY          = 0.10,
     C_sat_slow        = 60.0,
     brew_temp_K       = 365.15,  # 92°C：淺焙結構緻密，常用較高水溫
@@ -401,7 +400,11 @@ class V60Params(V60Constant):
     # 可及溶質總量佔粉重的比例 [-]（Class D：凍結為 roast prior，不進 fitting）
     # What: 決定初始固相溶質量 M_sol_0 = dose_g × max_EY [g]，並逐 bin 依
     #       volume_fraction × shell_accessibility 分配到 fast / slow 兩池。
-    # Why:  Gagné 回報手沖可萃取上限 30–32%（中焙）、淺焙細胞壁緻密約 22%。
+    # Why:  Moroney et al. (2016) 回報 90 °C 下同一支豆可萃量 28–32%（粗到細），
+    #       Liang et al. (2021) 浸泡實驗取 E_max = 0.3、量得平衡萃取 K·E_max ≈ 0.215
+    #       且與烘焙度幾乎無關。本模型沒有吸附平衡，兩池都可萃乾，因此 max_EY
+    #       對應的是 E_max 而非 K·E_max；淺焙舊值 0.22 是後者
+    #       （EXP-20261007-EXTRACTION-CLOSURE-REWRITE）。
     #       這是一個**有物理上限**的量：`max_EY > 1` 沒有意義，> 0.32 已超過
     #       文獻上限。舊 stage 7 把它擬到 0.3725 並與凍結的 `fast_fraction`
     #       完全簡併（AUD-3），等於用一個超物理的可萃取總量吸收萃取速率
@@ -410,9 +413,9 @@ class V60Params(V60Constant):
 
     tau_tort: float = 5.0
     # 咖啡顆粒內部的有效曲折度 τ_tort [-]（Class C：**本閉合唯一的 live 參數**）
-    # What: D_eff,x = D_x(T) / τ_tort，同時作用於 fast 與 slow 兩池。
-    #       它把「細胞壁 + 孔隙曲折 + 未溶解基質阻礙」一次收成一個無因次阻力，
-    #       不再有 fast / slow 各自的 mobility 與效率因子。
+    # What: D_eff,slow = D_slow(T) / τ_tort，只作用於 slow pool（未破壁核心）。
+    #       它把「完整細胞壁 + 孔隙曲折 + 未溶解基質阻礙」一次收成一個無因次阻力；
+    #       fast pool（破壁層）以自由溶液 D 釋放，不受它影響。
     # Why:  自由水中的 Stokes-Einstein D 是擴散的物理上界；多孔生物基質的
     #       有效擴散係數一定比它小，比值即 τ_tort（嚴格說是 τ²/ε_p，此處
     #       以單一有效值表示）。植物組織與咖啡細胞壁的文獻曲折度落在 2–10，
@@ -594,8 +597,8 @@ class V60Params(V60Constant):
     particle_d_min: float = 40e-9
     # 最小粒徑下限 [m]；供 measured PSD 缺值時的數值安全夾限
 
-    shell_thickness: float = 200e-6
-    # 可萃取外層（破壁層）厚度 [m]（Class B）
+    shell_thickness: float = DEFAULT_SHELL_THICKNESS_MM * 1e-3
+    # 可萃取外層（破壁層）厚度 [m]（Class D；數值與出處見 `psd.DEFAULT_SHELL_THICKNESS_MM`）
     # What: 研磨造成細胞壁破裂的深度尺度。它同時決定兩件事：
     #       (1) fast pool 的質量分率 shell_acc_i = 1 − (1 − δ_i/R_i)³
     #       (2) fast pool 的擴散長度 δ_i = min(shell_thickness, R_i)
@@ -1682,7 +1685,6 @@ class V60Params(V60Constant):
         vol_w = np.maximum(self.ext_bin_volume_fraction, 0.0)
         aspect = np.maximum(self.ext_bin_aspect_ratio_mean, 1.0)
         roundness = np.maximum(self.ext_bin_roundness_mean, 0.25)
-        shell = np.clip(self.ext_bin_shell_fraction, 0.0, 1.0)
 
         # ROUNDNESS ≡ 1/aspect_ratio，故 (aspect/roundness)^0.35 ≡ aspect^0.70。
         # 0.70 為未獨立標定的形狀指數（形狀越不規則越容易架橋/卡塞）。
@@ -1705,10 +1707,9 @@ class V60Params(V60Constant):
             self.ext_bin_diameter_mid_m / max(self.d32, 1e-12), 0.25, 3.0
         )
         # 沉積倍率保留體積主導，但仍受細粉與形狀不規則度調制。
+        # 萃取殼層比例不進堵塞 closure：萃取對水力單向耦合
+        # （舊的 (1.1 − 0.4·shell_fraction) 因子無出處，EXP-20261007-EXTRACTION-CLOSURE-REWRITE 移除）。
         deposition_mult = (self.d32 / np.maximum(self.ext_bin_diameter_mid_m, 1e-12)) ** 0.35 * irregularity ** 0.20
-        # 殼層可及比例越低的粗粒，沉積更像骨架回填而非孔隙填塞，附加倍率較小。
-        # 原式 0.6 + 0.4·(1 − shell + 0.25) 化簡（shell ∈ [0,1] → 倍率 ∈ [0.7, 1.1]）。
-        deposition_mult = deposition_mult * (1.1 - 0.4 * shell)
         if not np.all(np.isfinite(deposition_mult)) or np.any(deposition_mult <= 0.0):
             raise ValueError("clogging deposition multiplier 必須為有限正值；請檢查 PSD bins")
         return throat_w, deposition_w, throat_vchar, deposition_mult
@@ -2085,8 +2086,10 @@ class V60Params(V60Constant):
         """
         顆粒內有效擴散係數 D_eff = D(T) / τ_tort [m²/s]。
 
-        Why: `tau_tort` 是本閉合唯一的 live closure 參數，代表細胞壁與孔隙
-             曲折造成的阻力。它有物理下界 1（不可能快過自由水擴散）。
+        Why: `tau_tort` 是本閉合唯一的 live closure 參數，代表完整細胞壁與
+             顆粒內孔隙曲折造成的阻力，只作用於 slow pool（未破壁核心）；
+             fast pool 的破壁層對孔隙液開放，用自由溶液 D（見 `lambda_fast_bins`）。
+             它有物理下界 1（不可能快過自由水擴散）。
         """
         return self.solute_diffusivity(T_K, slow=slow) / max(float(self.tau_tort), 1.0)
 
@@ -2094,7 +2097,8 @@ class V60Params(V60Constant):
         """
         fast pool 的 bin-resolved 一階釋放速率 λ_fast,i [1/s]。
 
-        What: `λ_fast,i = π² · D_eff,fast(T) / (2δ_i)²`，δ_i = 破壁殼層厚度。
+        What: `λ_fast,i = π² · D_fast(T) / (2δ_i)²`，δ_i = 破壁殼層厚度，
+              D_fast 為自由溶液 Stokes-Einstein 擴散係數（**不除以 τ_tort**）。
               這是**內面封閉殼層**（sealed-face slab）的首特徵值：殼層外側對
               孔隙液開放、內側被未破壁核心封住，等效擴散半長度是 2δ 而非 δ。
         Why:  Crank 球形擴散解的首項給出 `M(t)/M_∞ = 1 − (6/π²)Σ n⁻² e^(−n²π²Dt/a²)`，
@@ -2112,16 +2116,19 @@ class V60Params(V60Constant):
               `EXTRACTION_FIT_SPEC` 的 prior 中心 5.0（文獻曲折度 2–10）
               現在才與模型同一個尺度。
         """
-        D_eff = self.effective_diffusivity(T_K, slow=False)
+        # 破壁細胞對孔隙液開放，沒有細胞壁阻擋；τ_tort 只屬於 slow pool
+        # （EXP-20261007-EXTRACTION-CLOSURE-REWRITE）。
+        D_free = self.solute_diffusivity(T_K, slow=False)
         delta = np.maximum(self.ext_bin_shell_depth_m, 1e-12)
-        return np.pi ** 2 * D_eff / (2.0 * delta) ** 2
+        return np.pi ** 2 * D_free / (2.0 * delta) ** 2
 
     def lambda_slow_bins(self, T_K) -> np.ndarray:
         """
         slow pool 的 bin-resolved 一階釋放速率 λ_slow,i [1/s]。
 
         What: `λ_slow,i = π² · D_eff,slow(T) / R_core,i²`，R_core = R_i − δ_i。
-        Why:  slow pool 就是「未破壁核心」這顆球，Crank 首項的特徵值是
+        Why:  slow pool 就是「未破壁核心」這顆球，溶質須穿過完整細胞壁，
+              阻擋由 `tau_tort` 表示。Crank 首項的特徵值是
               `π²D/a²`（a = 球半徑）。因此 λ_slow,i ∝ 1/R_core,i²——
               粗顆粒慢、細顆粒快，bin 之間的相對次序由幾何唯一決定，
               不像舊的 `exp(−L²/4Dt)` 會在不同 t 把次序翻過來（AUD-3）。
