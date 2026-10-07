@@ -73,6 +73,7 @@
 | `EXP-20261005-HYD-LSQ` | `2026-10-05 22:31:24 +0800` | 水力 stage 1/2 由 Powell 改為 least_squares（殘差向量）+ 四案重擬 | 定義同日中間版 `[BASELINE]`（`BL-20261005-hyd-lsq`，已被 `EXP-20261005-STAGE-LSQ` 取代）：canonical 單起點 1343 → 130 次模擬（344 → 35 s）；四案 7 起點重擬 1567 → 362 s；參數與 CI 移動 ≤ 1e-3（相對）、χ² ≤ 0.001；benchmark 與 identifiability 不變；4:11 七起點全部收斂到 χ² 234.93（**同日更正**：「雙 basin 不成立」的推論錯誤，第二個極小值在 n ≈ 2.10，見 `EXP-20261005-STAGE-LSQ`） | `pour_over/fitting.py`, `data/kinu_29_light/4:12/kinu29_light_20g_flow_fit_summary.csv`, `data/kinu_27_light/4:12/kinu27_light_20g_flow_fit_summary.csv`, `data/kinu_28_light/4:20/kinu28_light_20g_flow_fit_summary.csv`, `data/kinu_29_light/4:11/kinu29_light_20g_flow_fit_summary.csv`, `data/benchmark_suite_summary.csv`, `data/kinu29_fit_identifiability_slices.csv`, `data/kinu29_thermal_identifiability_slices.csv` |
 | `EXP-20261005-STAGE-LSQ` | `2026-10-05 23:26:04 +0800` | stage 4/5/7 改 least_squares（總 χ² 殘差向量）+ multi-start 7 → 3 起點 + 四案重擬 | 定義目前的 `[BASELINE]`（`BL-20261005-stage-lsq`）：canonical 單起點 130 → 116 次模擬；四案重擬 362 → 151 s；參數與 CI 移動 ≤ 6e-4（相對）、χ² ≤ 0.001；benchmark 與 identifiability 不變；4:11 第二個局部極小確認存在（n 2.10、χ² 264.9，連線障壁 Δχ² ≈ 3），3 起點已捕捉 | `pour_over/fitting.py`, `tests/test_fitting_loss.py`, 四案 `*_flow_fit_summary.csv`, `data/benchmark_suite_summary.csv`, `data/kinu29_fit_identifiability_slices.csv`, `data/kinu29_thermal_identifiability_slices.csv` |
 | `EXP-20261007-TAU-TORT-TRANSFER` | `2026-10-07 02:24:04 +0800` | 擬合後萃取輸出與 `tau_tort` 跨案可移植性 | 定義已知限制 7：TDS 誤差是 1 參數對 1 觀測的校準殘差；`tau_tort` 跨案 4.15–9.57 且與研磨度不單調，交叉套用時兩案 TDS 誤差超出 gate（+2.47 / −3.74 g/L），同豆 4:11 ↔ 4:12 互換在 gate 內（−0.46 / +0.70） | （scratchpad；repo 無變更） |
+| `EXP-20261007-SHELL-THICKNESS-SCAN` | `2026-10-07 12:42:14 +0800` | `shell_thickness`（與 `max_EY`）對 `tau_tort` 跨案分散的敏感度 | 否證「200 μm shell 造成 `tau_tort` 跨案 2.3× 分散」：shell 30–300 μm 下分散皆 2.4–3.6 倍、四案排序不變；shell、`max_EY`、`tau_tort` 對單一 TDS 簡併；細胞尺度 shell 需配 `max_EY` ≈ 0.30 才使 `tau_tort` 留在文獻範圍 | `data/shell_thickness_sensitivity.csv`, `data/shell_maxEY_sensitivity.csv` |
 
 ---
 
@@ -202,6 +203,73 @@ gates：`reduced_chi2 ≤ 3.0` | retention `≤ 15%` | 殘差白噪音（r/σ）
 5. **出水口熱電偶「斷流」實為濾杯移開時刻**（三案差 +0.5…+0.8 s），不是液柱自行斷流；只作診斷。
 6. **identifiability 分級邊界**：F12c 基準的「rtol 1e-7 下 0.07–0.1 路徑噪音」已查明為單段積分跨過注水率斷點，改分段積分後噪音 ~1e-8（`EXP-20260928-F13-C-PIECEWISE-ODE`），分級不再受噪音影響、可重現。現行 canonical 分級：`wetbed_rev_gain` medium（wide span 1.07）、`psi` medium（1.17）、`tau_wet` medium（1.04）——三者的 wide span 本身就落在 Δχ² = 1 邊界附近，判定穩定但資訊量小，不宜當強結論引用。`wetbed_rev_gain` 與 `psi` 皆 `in_fit = no`，dof mismatch 0。
 7. **TDS 誤差是校準殘差，不是預測精度**：每案 1 個 TDS 觀測對 1 個 live 萃取參數 `tau_tort`，零自由度。`tau_tort` 跨案 4.15–9.57（2.3 倍）且與研磨度不單調；以其他影片案例的幾何平均交叉套用時 TDS 誤差 `+0.91 / +2.47 / −3.74 / +1.27 g/L`（canonical / kinu27 / kinu28 / 4:11），兩案超出 gate。同豆同配方的 4:11 ↔ 4:12 互換誤差 `−0.46 / +0.70 g/L`（`EXP-20261007-TAU-TORT-TRANSFER`）。
+
+---
+
+## [ENTRY] EXP-20261007-SHELL-THICKNESS-SCAN
+
+- `entry_id`: `EXP-20261007-SHELL-THICKNESS-SCAN`
+- `timestamp`: `2026-10-07 12:42:14 +0800`（`data/shell_maxEY_sensitivity.csv` 修改時間）
+- `status`: `active`
+- `theme`: `shell_thickness（與 max_EY）對 tau_tort 跨案分散的敏感度`
+
+### Change
+
+- 無程式或參數變更。動機：文獻比對（`docs/literature_review/pour_over_modelling/`）顯示 Moroney 2019 的咖啡細胞
+  約 20–40 μm、fast pool 為表面一層破壁細胞；本模型 `shell_thickness = 200 μm` 讓 canonical 的 fast pool 佔可萃
+  質量 69%（體積加權），fast 時間常數約 54 s，主要粒徑 bin 與 slow pool（47–124 s）重疊。
+- 預先登記的假設：200 μm shell 是 `tau_tort` 跨案 2.3× 分散的來源之一；shell 縮到 30–50 μm 時，三個影片案例的
+  `tau_tort` 分散應明顯縮小。否證條件：分散不變或變大。
+- 方法：四案以 `BL-20261005-stage-lsq` summary reload（`_load_measured_benchmark_state`、`SOLVER_FINE`、凍結
+  `k_beta_prior_psd`），水力與熱固定，只改 `shell_thickness`（與追加檢驗的 `max_EY`），再
+  (a) 在 log10 `tau_tort` ∈ [0, 2] 上最小化 stage 7 同一個 χ²（含 `tau_tort` prior）；
+  (b) 以 brentq 求 prior-free 的 TDS 剛好命中 `tau_tort`。基準重現：canonical shell 200 μm 逐位元重現 χ² 9.944、
+  TDS 誤差 +0.106 g/L。
+
+### Results
+
+TDS 命中 `tau_tort`（prior-free），`max_EY` = 0.22：
+
+| shell [μm] | canonical fast 質量分率 | `kinu29/4:12` | `kinu27/4:12` | `kinu28/4:20` | `kinu29/4:11` | 影片三案 max/min | 影片三案 Σχ²（含 prior） |
+|---|---|---|---|---|---|---|---|
+| 30 | 0.16 | 2.21 | 3.29 | 1.30 | 3.03 | 2.53 | 35.97 |
+| 50 | 0.25 | 2.72 | 4.19 | 1.56 | 3.89 | 2.69 | 34.26 |
+| 100 | 0.44 | 5.13 | 9.46 | 2.62 | 8.87 | 3.61 | 32.27 |
+| 200（baseline） | 0.69 | 7.63 | 9.86 | 4.17 | 8.51 | 2.36 | 31.85 |
+| 300 | 0.83 | 4.89 | 6.04 | 2.55 | 5.16 | 2.37 | 31.51 |
+
+追加檢驗 shell × `max_EY`（TDS 命中 `tau_tort`）：
+
+| `max_EY` / shell | `kinu29/4:12` | `kinu27/4:12` | `kinu28/4:20` | `kinu29/4:11` | 影片三案 max/min |
+|---|---|---|---|---|---|
+| 0.22 / 40 μm | 2.44 | 3.70 | 1.42 | 3.42 | 2.60 |
+| 0.22 / 200 μm | 7.63 | 9.86 | 4.17 | 8.51 | 2.36 |
+| 0.30 / 40 μm | 5.91 | 9.39 | 3.85 | 9.19 | 2.44 |
+| 0.30 / 200 μm | 13.67 | 16.96 | 8.25 | 14.79 | 2.06 |
+
+- 所有組合在 [1, 100] 內皆有 TDS 命中解，最佳點無撞界。
+- χ² 差異（影片三案合計 31.5–36.0）幾乎全來自 `tau_tort` 的 log prior（中心 5、σ 0.35 dex）；TDS 本身在每個 shell
+  值都能被命中。
+
+### Interpretation
+
+- **假設否證**：跨案分散在任何 shell 值都維持 2.4–3.6 倍，四案排序不變（`kinu28` 恆最低、`kinu27` 恆最高）。
+  `EXP-20261007-TAU-TORT-TRANSFER` 列出的候選「`shell_thickness` 固定 0.2 mm」排除；剩下豆齡、TDS 量測、
+  研磨度相關的其他 closure 缺陷。
+- **`shell_thickness` 與 `max_EY`、`tau_tort` 三者簡併**：單一 TDS 無法區分 shell 厚度（AGENTS.md §4.D 已預期）。
+- **物理一致性**：在 `max_EY` = 0.22 下把 shell 改成細胞尺度（30–50 μm），`kinu28` 的 `tau_tort` 降到 1.30–1.56，
+  逼近迂曲度下限 1，且低於文獻 2–10。改成 `max_EY` = 0.30 後，四案 `tau_tort` 回到 3.85–9.39。現行 200 μm / 0.22
+  與 40 μm / 0.30 兩組都給出文獻範圍內的 `tau_tort`，資料無法鑑別；後者與 Moroney 的細胞尺度及 Liang 2021 的
+  E_max ≈ 0.3（K·E_max ≈ 0.215 為浸泡平衡值）一致。這只是物理先驗上的偏好，未改動 baseline。
+- 若要改 closure，須同時處理 slow pool 缺少細胞壁阻擋的問題（目前 fast / slow 只差溶質半徑 0.4 vs 1.0 nm）；
+  這屬 High-risk 變更，需完整重擬。
+
+### Artifacts
+
+- `data/shell_thickness_sensitivity.csv`（四案 × 5 shell：fast 質量分率、χ² 最佳 `tau_tort`、TDS 命中 `tau_tort`、
+  χ²、TDS 誤差、質量加權 fast / slow 時間常數）
+- `data/shell_maxEY_sensitivity.csv`（四案 × `max_EY` {0.22, 0.30} × shell {40, 200} μm）
+- 腳本：session scratchpad `shell_scan.py`、`shell_maxey.py`
 
 ---
 
