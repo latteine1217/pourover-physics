@@ -553,8 +553,6 @@ def simulate_brew(
 
     drive_components = params.bed_drive_components(h_free, T_K=T_K, t_sec=t, sat=S_mob)
     h_threshold_arr = np.asarray(drive_components["h_threshold"], dtype=float)
-    h_threshold_eff_arr = np.asarray(drive_components["h_threshold_eff"], dtype=float)
-    h_cap_wet_arr = np.asarray(drive_components["h_cap_wet"], dtype=float)
     h_bed_drive_arr = np.asarray(drive_components["h_bed_drive"], dtype=float)
     h_eff_arr = np.asarray(drive_components["h_eff"], dtype=float)
 
@@ -583,7 +581,7 @@ def simulate_brew(
     bypass_ratio = np.where(q_out > 1e-12, q_bp / _q_out_safe, 0.0)
     pref_ratio = np.where(q_out > 1e-12, q_pref / _q_out_safe, 0.0)
     head_gate = np.clip(
-        h_eff_arr / np.maximum(h_free + h_bed_drive_arr + h_cap_wet_arr, 1e-12), 0.0, 1.0
+        h_eff_arr / np.maximum(h_free + h_bed_drive_arr, 1e-12), 0.0, 1.0
     )
     bloom_mask = t <= t_bloom_end
     if np.any(bloom_mask):
@@ -737,8 +735,6 @@ def simulate_brew(
         head_gate    = head_gate,
         h_gas_mm     = np.asarray(params.h_gas(t), dtype=float) * 1e3,
         h_threshold_mm = h_threshold_arr * 1e3,
-        h_threshold_eff_mm = h_threshold_eff_arr * 1e3,
-        h_cap_wet_mm = h_cap_wet_arr * 1e3,
         h_bed_drive_mm = h_bed_drive_arr * 1e3,
         h_cap_bed_mm = float(params.h_cap_bed(params.T_brew)) * 1e3,
         h_eff_mm     = h_eff_arr * 1e3,

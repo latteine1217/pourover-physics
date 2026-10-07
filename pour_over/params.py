@@ -557,19 +557,6 @@ class V60Params(V60Constant):
     #       整個 [0.15, 0.25] 區間在 h_bed = 5.3 cm 下都給出 h_cap_bed > h_bed，
     #       結論（S_r = 1，濕床不自排）對此比例不敏感。
 
-    darcy_capillary_c0: float = 0.16663265
-    # 已浸濕床層的 Darcy 毛細係數在 0°C 的截距
-    # 校準點：a(2°C)=0.18, a(100°C)=0.835
-
-    darcy_capillary_c1: float = 0.00668367
-    # 已浸濕床層的 Darcy 毛細係數斜率 [1/°C]
-    # 線性式：a(T_C) = 0.16663265 + 0.00668367 * T_C
-
-    darcy_capillary_gain: float = 0.1
-    # Darcy 毛細係數對濕床通量的影響強度；作為無因次增益乘子
-    # 校準更新：壓力頭收支版 q_extract 下，只保留小幅濕床毛細增益，
-    # 避免把通量推得過快而造成 TDS/EY 偏低
-
     # ── 修正 [9] 毛細管壓門檻（滴濾模式）──────────────────────────────────
     h_cap: float = 0.003
 
@@ -1086,10 +1073,6 @@ class V60Params(V60Constant):
         self.d32 = max(float(particle["d32_m"]), self.particle_d_min)
         self.Dv50 = max(float(particle["Dv50_m"]), self.particle_d_min)
         self.psd_throat_diameter_m = float(particle["throat_diameter_m"])
-        # k 的 PSD 先驗尺度：Kozeny-Carman 型 k = f_sp·d²·φ^η，以 d32 為特徵粒徑。
-        self.k_from_d32 = self.f_sp * (self.d32 ** 2) * (self.phi ** self.eta_porosity)
-        # 舊名 alias（deprecated，保留一個週期供既有診斷/報表呼叫端過渡）
-        self.k_from_D10 = self.k_from_d32
         self.surface_area_spec = particle["surface_area"]
         self.ref_surface_area_spec = ref_particle["surface_area"]
         self.surface_area_ratio = self.surface_area_spec / max(self.ref_surface_area_spec, 1e-12)
@@ -1458,7 +1441,7 @@ class V60Params(V60Constant):
 
         What:
             h_bed_drive = S_mob · h_bed
-            raw_head    = h_free + h_bed_drive − h_threshold_eff + h_cap_wet
+            raw_head    = h_free + h_bed_drive − (h_cap + h_gas(t))
             h_eff       = softplus(raw_head)
 
         Why（F2b 修正 F2 的驅動頭錯誤）:
@@ -1473,41 +1456,26 @@ class V60Params(V60Constant):
             S_mob → 1（床內飽和）給出完整的 h_bed 高程頭；
             S_mob → 0（mobile 水排乾、只剩 immobile）驅動頭退回 h_free，
             再配合 kr(S_mob) → 0，出流自然終止 —— 終止條件仍不需要任何 clamp。
+            同理，濕床內沒有液氣介面，毛細力不提供額外的穿床驅動頭；門檻
+            h_cap + h_gas 也不隨濕潤程度縮減（EXP-20261007-HCAP-WET-REMOVAL）。
 
         Args:
             h_free : 粉床頂部以上的自由水柱高度 [m]（不是總水位）
             sat    : 床內 **mobile** 孔隙飽和度 S_mob ∈ [0,1]（見 `mobile_saturation`）
         """
-        if T_K is None:
-            T_K = self.T_brew
         h_free_arr = _floor(_as_float(h_free), 0.0)
-        T_arr = _as_float(T_K)
         t_arr = _as_float(t_sec)
         if sat is None:
             s_mob = np.zeros_like(h_free_arr, dtype=float)
         else:
             s_mob = _clip(_as_float(sat), 0.0, 1.0)
-        wet_gate = _clip((s_mob - 0.85) / 0.15, 0.0, 1.0)
-
         h_threshold = self.h_cap + self.h_gas(t_arr)
-        # 濕床毛細驅動頭：正比於床層已建立連通液相的比例（S_mob），
-        # 舊版用 h/h_bed 當代理量，在新狀態下 h_free 與床層浸潤程度已無關。
-        h_cap_wet = (
-            self.darcy_capillary_gain
-            * self.darcy_capillary_coeff(T_arr)
-            * (0.5 * self.h_bed * s_mob)
-            * wet_gate
-        )
-        h_threshold_eff = h_threshold * (1.0 - 0.55 * wet_gate)
         h_bed_drive = s_mob * self.h_bed
-        raw_head = h_free_arr + h_bed_drive - h_threshold_eff + h_cap_wet
+        raw_head = h_free_arr + h_bed_drive - h_threshold
         eps = HEAD_SOFTPLUS_EPS_M
         h_eff = eps * np.logaddexp(0.0, raw_head / eps)
         return {
-            "wet_gate": _scalar_out(wet_gate),
             "h_threshold": _scalar_out(h_threshold),
-            "h_threshold_eff": _scalar_out(h_threshold_eff),
-            "h_cap_wet": _scalar_out(h_cap_wet),
             "h_bed_drive": _scalar_out(h_bed_drive),
             "raw_head": _scalar_out(raw_head),
             "h_eff": _scalar_out(h_eff),
@@ -1583,21 +1551,6 @@ class V60Params(V60Constant):
         mu_ratio = self.mu_water(T_K) / self.mu
         kappa_ratio = sigma_ratio / max(mu_ratio, 1e-12)
         return self.tau_cap_ref / max(kappa_ratio, 1e-6)
-
-    def darcy_capillary_coeff(self, T_K: float) -> float:
-        """
-        已浸濕床層的 Darcy 毛細係數（線性溫度關係）。
-
-        What: 依據使用者提供的圖，採線性近似：
-              a(T_C) = a0 + a1 * T_C
-              0°C  約 0.18，100°C 約 0.80
-
-        Why: 乾粉浸濕前沿可用 Lucas-Washburn；
-             但床層一旦完成浸濕，毛細傳輸改以 Darcy 型係數描述，
-             並依圖使用線性溫度關係，而不是 sqrt(t) 前沿律。
-        """
-        T_C = _clip(T_K - 273.15, 0.0, 100.0)
-        return self.darcy_capillary_c0 + self.darcy_capillary_c1 * T_C
 
     def h_gas(self, t_sec: float) -> float:
         """
@@ -2189,13 +2142,12 @@ class V60Params(V60Constant):
             等價寫法：
             Q_ext = kr(sat) · k · A_ref · ρg · h_eff / (μ(T) · L_bed)
             A_ref = π·tan²θ·h_bed²
-            h_eff = softplus_like(h - h_cap - h_gas(t) + h_cap,wet)
+            h_eff = softplus_like(h - h_cap - h_gas(t))
 
             其中：
-            - h                 : 重力驅動水頭
+            - h                 : 重力驅動水頭（h_free + S_mob·h_bed，見 `bed_drive_components`）
             - h_cap             : 低水位毛細截止頭
             - h_gas(t)          : CO₂ 背壓等效水頭
-            - h_cap,wet         : 已浸濕床層的額外毛細驅動水頭
 
         Why:
             把所有流動機制都放回「有效壓力頭」的同一語言中，避免：

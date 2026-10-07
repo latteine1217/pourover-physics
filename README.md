@@ -209,8 +209,8 @@ Reference brew `kinu29/4:12`
 
 | Fitted parameter | Value | 95% CI |
 |---|---|---|
-| permeability `k` | 6.46e-11 m² | [6.36e-11, 6.75e-11] |
-| Corey `n` | 3.13 | [2.13, 4.25] |
+| permeability `k` | 6.59e-11 m² | [6.50e-11, 6.88e-11] |
+| Corey `n` | 3.19 | [2.19, 4.29] |
 | wetting time `τ_wet` | 10.0 s (at lower bound) | up to 16.3 |
 | dripper heat transfer `U` | 258 W/(m²K) | [184, 362] |
 | tortuosity `τ_tort` | 7.47 | — |
@@ -229,14 +229,14 @@ All four reference brews (`data/benchmark_suite_summary.csv`):
 | Brew | Data source | reduced χ² | TDS error | Benchmark |
 |---|---|---|---|---|
 | Kinu 29, 4/12 (reference) | video | 0.36 | +0.11 g/L | pass |
-| Kinu 27, 4/12 | video | 0.36 | +0.14 g/L | fails; residuals show a systematic pattern |
+| Kinu 27, 4/12 | video | 0.37 | +0.14 g/L | fails; residuals show a systematic pattern |
 | Kinu 28, 4/20 | video | 0.50 | +0.03 g/L | pass |
-| Kinu 29, 4/11 | hand log | 8.38 | +0.10 g/L | fails; hand-logged volumes read high |
+| Kinu 29, 4/11 | hand log | 8.65 | +0.10 g/L | fails; hand-logged volumes read high |
 
 A brew passes when its residuals are within measurement noise and show no
 systematic pattern, and its water balance, cup temperature and TDS are within
 set tolerances. Fitted permeabilities agree across the three video brews
-(6.5–7.7e-11 m²).
+(6.6–7.8e-11 m²).
 
 All of these numbers are **calibration** errors on the brew each parameter
 set was fitted to, not prediction errors on a new brew.
