@@ -75,6 +75,7 @@
 | `EXP-20261007-TAU-TORT-TRANSFER` | `2026-10-07 02:24:04 +0800` | 擬合後萃取輸出與 `tau_tort` 跨案可移植性 | 定義已知限制 7：TDS 誤差是 1 參數對 1 觀測的校準殘差；`tau_tort` 跨案 4.15–9.57 且與研磨度不單調，交叉套用時兩案 TDS 誤差超出 gate（+2.47 / −3.74 g/L），同豆 4:11 ↔ 4:12 互換在 gate 內（−0.46 / +0.70） | （scratchpad；repo 無變更） |
 | `EXP-20261007-SHELL-THICKNESS-SCAN` | `2026-10-07 12:42:14 +0800` | `shell_thickness`（與 `max_EY`）對 `tau_tort` 跨案分散的敏感度 | 否證「200 μm shell 造成 `tau_tort` 跨案 2.3× 分散」：shell 30–300 μm 下分散皆 2.4–3.6 倍、四案排序不變；shell、`max_EY`、`tau_tort` 對單一 TDS 簡併；細胞尺度 shell 需配 `max_EY` ≈ 0.30 才使 `tau_tort` 留在文獻範圍 | `data/shell_thickness_sensitivity.csv`, `data/shell_maxEY_sensitivity.csv` |
 | `EXP-20261007-HCAP-WET-REMOVAL` | `2026-10-07 15:24:12 +0800` | 移除濕床毛細加驅動頭 `h_cap_wet` 與門檻縮減 + 四案重擬 | 定義目前的 `[BASELINE]`（`BL-20261007-no-hcap-wet`）：影片三案 Δχ² 皆 +0.07、k +1.8–2.3%，benchmark 狀態與 identifiability 分級不變；`kinu29/4:11` stage 4 改為 accept（`pref_flow_coeff` 1.2e-4）；同批移除死碼 `k_from_d32` | `pour_over/params.py`, `pour_over/core.py`, 四案 `*_flow_fit_summary.csv`, `data/benchmark_suite_summary.csv`, `data/kinu29_fit_identifiability_slices.csv`, `v60_*.png` |
+| `EXP-20261007-PSD-K-TESTS` | `2026-10-07 15:26:05 +0800` | 以現有資料檢驗 PSD 長度尺度跨研磨度傳遞 `k` | 定義已知限制 9：四案擬合 `k` 不隨 `d32²` 但落在 PSD 雜訊內，無法判定；Lee & Chang 2026 repo 的 PSD 與發表 D90 不一致、沖煮資料缺失，外部檢驗未執行 | （scratchpad；repo 無變更） |
 
 ---
 
@@ -199,6 +200,56 @@ gates：`reduced_chi2 ≤ 3.0` | retention `≤ 15%` | 殘差白噪音（r/σ）
 5. **出水口熱電偶「斷流」實為濾杯移開時刻**（三案差 +0.5…+0.8 s），不是液柱自行斷流；只作診斷。
 6. **identifiability 分級邊界**：F12c 基準的「rtol 1e-7 下 0.07–0.1 路徑噪音」已查明為單段積分跨過注水率斷點，改分段積分後噪音 ~1e-8（`EXP-20260928-F13-C-PIECEWISE-ODE`），分級不再受噪音影響、可重現。現行 canonical 分級：`wetbed_rev_gain` medium（wide span 1.15）、`psi` medium（1.28）、`tau_wet` medium（1.06）——三者的 wide span 本身就落在 Δχ² = 1 邊界附近，判定穩定但資訊量小，不宜當強結論引用。`wetbed_rev_gain` 與 `psi` 皆 `in_fit = no`，dof mismatch 0。
 7. **TDS 誤差是校準殘差，不是預測精度**：每案 1 個 TDS 觀測對 1 個 live 萃取參數 `tau_tort`，零自由度。`tau_tort` 跨案 4.15–9.58（2.3 倍）且與研磨度不單調；以其他影片案例的幾何平均交叉套用時 TDS 誤差 `+0.91 / +2.47 / −3.74 / +1.27 g/L`（canonical / kinu27 / kinu28 / 4:11），兩案超出 gate。同豆同配方的 4:11 ↔ 4:12 互換誤差 `−0.46 / +0.70 g/L`（`EXP-20261007-TAU-TORT-TRANSFER`，於 `BL-20261005-stage-lsq` 計算；本版 `tau_tort` 移動 ≤ 0.2%）。
+8. **萃取 closure 的 fast / slow 是幾何分割，不是雙孔隙機制**：200 μm shell 讓 canonical fast pool 佔可萃質量 69%，兩 pool 共用 Stokes-Einstein `D_eff`、無細胞壁阻擋。`shell_thickness`、`max_EY`、`tau_tort` 對單一 TDS 簡併，shell 不是 `tau_tort` 跨案分散的來源（`EXP-20261007-SHELL-THICKNESS-SCAN`）。
+9. **k 不由 PSD 預測**：`k` 每案擬合；擬合值不隨 `d32²`，但同刻度 PSD 雜訊（`d32` 約 20%）大於刻度間差異，無法判定（`EXP-20261007-PSD-K-TESTS`）。
+
+---
+
+## [ENTRY] EXP-20261007-PSD-K-TESTS
+
+- `entry_id`: `EXP-20261007-PSD-K-TESTS`
+- `timestamp`: `2026-10-07 15:26:05 +0800`（結論時間；無 repo artifact）
+- `status`: `active`
+- `theme`: `以現有資料檢驗「measured PSD 長度尺度能跨研磨度傳遞 k」：本專案四案與 Lee & Chang 2026 公開資料`
+
+### Change
+
+- 無程式或參數變更。動機：文獻回顧（`docs/literature_review/pour_over_modelling/phase5_synthesis/gaps.md` G2）指出
+  `k ∝ d32²` 型傳遞在 espresso 與未壓實樣品上有四組反證，重力手沖無資料；先用不需新實驗的資料檢驗。
+- (a) 本專案四案：比較擬合 `k`（`BL-20261007-no-hcap-wet` 之前的 `BL-20261005-stage-lsq` 值）與 per-case PSD
+  `d32` 的 `(d32/d32_ref)²`。
+- (b) Lee & Chang 2026（npj Sci. Food，`github.com/Byoung-Yong/FilterCoffee` commit `1062daa`）作為外部終點測試集的
+  可行性：檢查 repo 內容，並以 SI Table S1 的 D90 反推 repo PSD 的欄位語意。
+
+### Results
+
+(a)
+
+| case | `d32` [mm] | `k / k_ref` | `(d32/d32_ref)²` |
+|---|---|---|---|
+| `kinu29/4:12`（ref） | 1.069 | 1.000 | 1.000 |
+| `kinu27/4:12` | 0.975 | 1.032 | 0.832 |
+| `kinu28/4:20` | 0.912 | 1.185 | 0.728 |
+| `kinu29/4:11` | 0.894 | 0.822 | 0.699 |
+
+(b)
+
+- repo 只含 `data/public_data.csv`：3 組 PSD（fine / medium / coarse，54 個對數間距粒徑點 5–2229 μm）。論文 Data
+  Availability 所列的 15 次沖煮量測、held-out 兩組 PSD、53 筆公開食譜皆不在 repo；PSD 轉換腳本已刪除（只剩 `.pyc`）。
+  README 標題與發表標題不同。
+- 以權重 `y·d^k` 計算 D90，k ∈ {0, 0.5, 1, 1.5, 2, 3}，與 SI D90（fine / medium / coarse = 592.1 / 1010.1 / 1814.6 μm）
+  比較：fine 需 k ≈ 0.5、medium k ≈ 0.75–1、coarse k ≈ 2.3，沒有單一 k 能同時重現三組。
+
+### Interpretation
+
+- (a) 擬合 `k` 不隨 `d32²`：`kinu28` 的 `d32` 最小、`k` 最大，方向與 Kozeny-Carman 相反。但同刻度兩日 `d32` 差約 20%
+  （`d32²` 約 40%），刻度間差異落在 PSD 量測雜訊內，**無法判定**。檢驗需要 `d32` 跨 ≥ 2 倍的研磨系列與重複 PSD。
+- (b) repo PSD 與發表的 D90 不一致，held-out PSD 與沖煮量測缺失，以此資料跑的外部檢驗會建立在無法驗證的輸入上，
+  **未執行**。要做需向作者索取 SI Table S1 對應的 PSD 與 15 次沖煮資料。
+
+### Artifacts
+
+- 無 repo artifact；session scratchpad `FilterCoffee/`（clone）
 
 ---
 

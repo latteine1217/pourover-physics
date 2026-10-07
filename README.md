@@ -110,7 +110,7 @@ conserved exactly (the reported residual is about 1e-13 mL).
 | Bed wetting | A wetting state `w` grows from 0 to 1 with time constant `τ_wet` and opens both absorption and capillary retention | `τ_wet` (fitted) |
 | Capillary retention | Young-Laplace head `2σ(T)/(ρ g r_pore)`, with pore radius `0.2·d32` from the measured PSD, sets how much water the bed can hold against gravity | from PSD |
 | Flow through the bed | Darcy's law driven by the ponded head plus the saturated bed height, minus a capillary cutoff and a decaying CO₂ back-pressure | permeability `k` (fitted) |
-| Partly saturated flow | Corey relative permeability `kr = S^n` on the drainable saturation | Corey `n` (fitted) |
+| Partly saturated flow | Corey-type relative permeability `kr = smoothstep(S)^n`, with `smoothstep(S) = 3S² − 2S³`, on the drainable saturation; at low saturation it falls about as `S^(2n)` | exponent `n` (fitted) |
 | Fines clogging | Fines block pore throats (number-weighted) and deposit in the bed (volume-weighted); each pour briefly relieves the throats; swelling and head compaction lower porosity through Kozeny-Carman | clogging strength from PSD |
 | Bypass | Flow along the filter ribs once the ponded head exceeds a few mm | fixed |
 | Outlet | A 0.5 s hold-up for dripping from the outlet into the server | fixed |
@@ -119,9 +119,13 @@ conserved exactly (the reported residual is about 1e-13 mL).
 
 - **Per size bin.** The measured PSD is kept as individual size bins, each
   with its own surface area and particle size.
-- **Fast and slow pools.** In each bin, a broken outer shell (200 μm) releases
-  solute quickly, and the intact core releases it slowly. Both follow the
-  long-time limit of diffusion out of a sphere:
+- **Fast and slow pools.** In each bin, the outer 200 μm shell holds the fast
+  pool and the core inside it holds the slow pool. Both release by diffusion
+  with the same effective diffusivity (only the assumed solute radius
+  differs), so the split is a two-depth geometry rather than the
+  broken-cell / intact-cell mechanism of the coffee literature, whose broken
+  layer is about one 20–40 μm cell deep. Both pools follow the long-time limit
+  of diffusion out of a sphere:
   - shell: `λ_fast = π²·D_eff/(2δ)²`;
   - core: `λ_slow = π²·D_eff/R_core²`.
 - **Saturation.** Release slows as the liquid approaches the solubility
@@ -133,7 +137,10 @@ conserved exactly (the reported residual is about 1e-13 mL).
   the outflow.
 
 Total extractable mass is fixed by roast (22% of dose for light roast). The
-only fitted extraction parameter is the tortuosity `τ_tort`.
+model has no sorption equilibrium, so all of it is reachable given enough
+time. The only fitted extraction parameter is the tortuosity `τ_tort`, and
+with one TDS reading per brew it is degenerate with the shell thickness and
+the extractable fraction.
 
 ### Heat
 
