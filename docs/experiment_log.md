@@ -78,6 +78,7 @@
 | `EXP-20261007-PSD-K-TESTS` | `2026-10-07 15:26:05 +0800` | 以現有資料檢驗 PSD 長度尺度跨研磨度傳遞 `k` | 定義已知限制 9：四案擬合 `k` 不隨 `d32²` 但落在 PSD 雜訊內，無法判定；Lee & Chang 2026 repo 的 PSD 與發表 D90 不一致、沖煮資料缺失，外部檢驗未執行 | （scratchpad；repo 無變更） |
 | `EXP-20261007-EXTRACTION-CLOSURE-REWRITE` | `2026-10-07 16:33:07 +0800` | 萃取 closure 依雙孔隙文獻重寫 + 移除殼層→堵塞耦合 + 四案重擬 | 定義目前的 `[BASELINE]`（`BL-20261007-extraction-closure`）：shell 30 μm、fast pool 自由擴散、`tau_tort` 只管 slow、淺焙 `max_EY` 0.30；`tau_tort` 3.34–7.40、benchmark 狀態不變；slow 時間常數 120–380 s；代價是 TDS 對 PSD 尺度敏感，同豆 4:11 ↔ 4:12 互換誤差 ±1.8 g/L 超出 gate | `pour_over/params.py`, `pour_over/psd.py`, `tests/test_extraction_closure.py`, 四案 `*_flow_fit_summary.csv`, `data/benchmark_suite_summary.csv`, `data/kinu29_fit_identifiability_slices.csv`, `v60_*.png` |
 | `EXP-20261007-JOINT-EXTRACTION-FIT` | `2026-10-07 18:20:21 +0800` | 跨 brew 聯合萃取擬合（共用 `tau_tort` / shell） | 共用 `tau_tort` 時 χ²_TDS/dof 5.8（四案）/ 6.4（影片三案），案間差異超出 TDS 誤差；加共用 shell 的最佳點 `tau_tort` 撞上界 100，shell 不可辨識；TDS 對研磨刻度非單調，偏離最大的 kinu28 是唯一不同日期的沖煮 | `data/extraction_joint_fit.csv`, `data/extraction_joint_fit_grid.csv` |
+| `EXP-20261007-HGAS-PROFILE` | `2026-10-07 18:35:25 +0800` | CO₂ 背壓 `h_gas_0` 逐 brew profile | 影片拍不到粉床；出液曲線下 `h_gas_0` 不可辨識（三案皆偏好掃描上界、悶蒸窗幾乎無訊號），大背壓的拉力來自補償第二注提早出液；養豆天數假設未被檢驗 | `data/hgas_profile.csv` |
 
 ---
 
@@ -203,6 +204,53 @@ gates：`reduced_chi2 ≤ 3.0` | retention `≤ 15%` | 殘差白噪音（r/σ）
 7. **TDS 誤差是校準殘差，不是預測精度**：每案 1 個 TDS 觀測對 1 個 live 萃取參數 `tau_tort`，零自由度。`tau_tort` 跨案 3.34–7.40（影片三案 2.2 倍）且與研磨度不單調；以其他影片案例的幾何平均交叉套用時 TDS 誤差 `+0.02 / +2.63 / −2.74 / +1.75 g/L`（canonical / kinu27 / kinu28 / 4:11），兩案超出 gate。同豆同研磨的 4:11 ↔ 4:12 互換誤差 `−1.57 / +1.76 g/L`，**也超出 gate**（`EXP-20261007-EXTRACTION-CLOSURE-REWRITE`）。
 8. **TDS 對 PSD 粒徑尺度敏感，萃取 closure 的殼層與總量是文獻尺度選擇**：可萃質量 81–84% 在 slow pool（速率 ∝ 1/R_core²），同刻度兩日 PSD `d32` 約 20% 的差異直接進入 TDS。shell 30 μm 與 `max_EY` 0.30 取自細胞尺寸與可萃量文獻，與 `tau_tort` 對單一 TDS 簡併（`EXP-20261007-SHELL-THICKNESS-SCAN`）；fast pool 近乎瞬時釋放（0.17 s），比 Moroney 的 surface 時間快，未表示表面溶解與膜傳質。
 9. **k 不由 PSD 預測**：`k` 每案擬合；擬合值不隨 `d32²`，但同刻度 PSD 雜訊（`d32` 約 20%）大於刻度間差異，無法判定（`EXP-20261007-PSD-K-TESTS`）。
+
+---
+
+## [ENTRY] EXP-20261007-HGAS-PROFILE
+
+- `entry_id`: `EXP-20261007-HGAS-PROFILE`
+- `timestamp`: `2026-10-07 18:35:25 +0800`（`data/hgas_profile.csv` 修改時間）
+- `status`: `active`
+- `theme`: `CO₂ 背壓 h_gas_0 的逐 brew profile：能否由影片出液曲線估計、是否隨養豆天數變化`
+
+### Change
+
+- 無程式或參數變更。動機：使用者假設豆中 CO₂ 同時影響水阻與萃取；kinu28（4/20，養豆最久）TDS 最高，方向一致。
+  現行 `h_gas_0` = 9 mm、`tau_co2` = 35 s 對所有淺焙案例相同，先前兩次否定 CO₂ 機制的檢驗
+  （`EXP-20260925-RESIDUAL-DIAGNOSTIC`、`EXP-20260926-GAS-STATE`）用的是後來證實偏差的紀錄表出液。
+- 直接觀測不可行：三支沖煮錄影的鏡頭只拍分享壺、秤與溫度計，V60 粉床在畫面外，無法量悶蒸隆起或冒泡。
+- 間接方法：三個影片案例，`h_gas_0` ∈ {0, 3, 6, 9, 12, 18, 25} mm（`tau_co2` 固定），每點從 baseline 參數單起點
+  重擬（`fit_k_kbeta_from_flow_profile`，`compute_ci=False`；以替換 `RoastProfile.LIGHT.co2_pressure_m` 設定，
+  並 assert 擬合後 `h_gas_0` 等於設定值）。h = 9 mm 重現 baseline χ²（10.075 / 6.951 / 15.433 vs 10.085 / 6.951 / 15.459）。
+- 預先登記判準：每案 profile 兩側 Δχ²_hyd ≥ 1 才算可辨識；kinu28 最佳 `h_gas_0` 小於兩個 4/12 案例且 68% 區間
+  不重疊 → 假設成立；順序相反且有界 → 否證；profile 平坦或無界 → 無法判定。
+
+### Results
+
+| case | Δχ²_hyd（h = 0 相對最佳） | 最佳 `h_gas_0` | 悶蒸窗 χ² 變化幅度（t ≤ bloom_end + 10 s） | 悶蒸窗點數 |
+|---|---|---|---|---|
+| `kinu29/4:12` | `+2.65` | 25 mm（掃描上界） | ≤ 0.17 | 6 |
+| `kinu27/4:12` | `+2.40` | 25 mm（掃描上界） | ≤ 0.26 | 1 |
+| `kinu28/4:20` | `+1.28` | 25 mm（掃描上界） | ≤ 0.14 | 7 |
+
+- 三案 χ²_hyd 隨 `h_gas_0` 單調下降，最小值都在掃描上界，profile 無上界。
+- 以 baseline 參數把 `h_gas_0` 由 9 改為 25 mm（不重擬）的 χ² 變化分窗：悶蒸窗 `+0.37 / −0.21 / −0.07`，
+  第二注窗（悶蒸結束後 10–40 s）`−1.93 / −0.70 / −0.71`，其餘 `+3.11 / −0.26 / +0.23`（canonical / kinu27 / kinu28）。
+
+### Interpretation
+
+- **無法判定**：`h_gas_0` 不可由出液曲線辨識，無法比較案例間的 CO₂ 背壓，養豆天數假設未被檢驗。
+- 擬合偏好大背壓的拉力來自第二注窗：25 mm 在 60 s 時仍剩約 4.5 mm，延遲第二注出液，補償已知限制 2
+  （停流後重啟的第二注出液提早 2–4 s）。這是 closure 互相補償，不是 CO₂ 的證據；不得據此調高 `h_gas_0`。
+- 悶蒸段本身資料點少（1–7 點）且對背壓不敏感。要檢驗 CO₂，需要粉床表面的直接觀測（悶蒸隆起高度、冒泡
+  持續時間）或每包豆的烘焙日期。
+- 附帶發現：README 假設表的 CO₂ 背壓寫 1 mm，實際淺焙 profile 使用 9 mm（`RoastProfile.LIGHT.co2_pressure_m`）。
+
+### Artifacts
+
+- `data/hgas_profile.csv`（三案 × 7 個 `h_gas_0`：χ²、χ²_hyd、悶蒸窗 χ²、重擬參數）
+- 腳本：session scratchpad `hgas_profile.py`
 
 ---
 
