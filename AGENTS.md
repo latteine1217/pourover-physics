@@ -39,7 +39,7 @@
 
 允許：
 - fast pool（破壁殼層，`δ_i = min(shell_thickness, R_i)`）與 slow pool（Crank 球形擴散首項）
-  一階釋放，λ 公式見 `README.md`「Release laws」
+  一階釋放，λ 公式見 `docs/model.md`「Release laws」
 - 溫度相依**只**走 Stokes-Einstein `D(T) = k_B T/(6π μ(T) r)`
 - measured PSD bin-resolved `A_i, δ_i, M_i`
 - outer-shell accessibility（決定 fast/slow 質量分配）
@@ -111,7 +111,7 @@
 ## 5. PSD 規範
 
 PSD 匯出來自使用者的 [coffeegrindsize](https://github.com/latteine1217/coffeegrindsize) fork，
-欄位契約見 `README.md`「Particle-size distribution」；任一端改動欄位名稱或定義，必須同步
+欄位契約見 `docs/model.md`「Particle-size distribution」；任一端改動欄位名稱或定義，必須同步
 `pour_over/psd.py` 與 `tests/test_psd_invariants.py`。
 
 若有 measured PSD：

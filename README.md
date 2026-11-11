@@ -1,44 +1,72 @@
-# V60 Pour-Over Physics Simulation
+# Pour-Over
 
-A physics-based simulator of V60 pour-over coffee. Given a recipe (dose, grind
-size distribution, water temperature, pour schedule), it predicts how water
-moves through the coffee bed, how much solute dissolves from each particle
-size, and how the brew cools. It reports the outflow curve, drain time, water
-left in the bed, cup temperature, TDS and extraction yield.
+**A measurement-constrained physics model of V60 coffee brewing**
 
-The model is calibrated against real brews filmed on a scale: the outflow
-level, temperatures and final TDS are read from the video, and a small number
-of physical parameters are fitted to them.
+A coupled reduced-order model for studying how pouring becomes outflow, solute release, and cup temperature. The model combines porous-media hydraulics, measured particle-size distributions, and multi-node heat balances so that brewing curves and their underlying physical assumptions can be tested together.
 
-![Measured vs fitted outflow, canonical brew](data/kinu_29_light/4:12/kinu29_light_20g_flow_fit.png)
+[Model and assumptions](docs/model.md) · [Reproducibility and calibration](docs/reproducibility.md) · [Literature map](docs/literature_map.md)
 
-*Kinu 29, light roast, 20 g, 5.3 cm bed. Poured and drained volume read frame
-by frame from the brew video, against the fitted model. Bottom panel:
-residuals with the per-point measurement band.*
+## Research scope
 
-## What it is and is not
+Pour-over brewing couples water retention, unsaturated drainage, diffusion within coffee particles, and heat exchange with the equipment. This project represents those processes as coupled ordinary differential equations. Measured recipes and particle-size distributions provide the inputs; outputs include volume, flow rate, retained water, temperature, total dissolved solids (TDS), and extraction yield (EY).
 
-The simulator is a **reduced-order** model. It tracks a handful of water
-pools, temperatures and per-size-bin solute masses as one coupled ODE system,
-so a full brew runs in under a second. Every term is a named physical
-mechanism (Darcy flow, capillary retention, diffusion out of grains,
-convective heat loss) rather than a fitted curve.
+The **reduced-order porous-media model** describes a complete brew through explicit mechanisms and a small set of closure parameters. It does not resolve the three-dimensional flow field inside the bed. Its intended uses are mechanism analysis, comparison with measurements, and exploration near calibrated conditions. Prediction across recipes still requires independent experimental validation.
 
-It is **not** a CFD or multiphase PDE solver, and it does not resolve flow
-within the bed in 3D. It is also not a black-box regressor: a parameter is
-fitted only when the measurements can pin it down and it has a physical
-meaning.
+## Model architecture
+
+| Module | Physical description | Measurement constraints |
+|---|---|---|
+| Hydraulics | Darcy flow, capillary retention, unsaturated relative permeability, and separate throat and deposition clogging | Pour and outflow curves, stop time, bed height |
+| Extraction | Broken-shell and particle-core release in each measured PSD bin, coupled to layered solute transport | Particle-size and shape distributions, final TDS |
+| Heat transfer | Heat exchange among the slurry, dripper, server, and surroundings | Equipment mass, water temperature, server temperature series or a single cup reading |
+
+Temperature affects flow through viscosity and extraction through diffusivity and solubility. Calibration proceeds through hydraulics, heat transfer, and extraction in stages. Measured inputs remain fixed to limit compensation for errors in one module by parameters in another.
+
+See the model documentation for [release laws](docs/model.md#release-laws), the [particle-size distribution contract](docs/model.md#particle-size-distribution), and fixed assumptions.
+
+## Comparison with a measured brew
+
+The reference brew uses 20 g of light-roast coffee at Kinu setting 29 (`kinu29/4:12`). Results below come from the current [calibration summary](data/kinu_29_light/4:12/kinu29_light_20g_flow_fit_summary.csv).
+
+### Cup-level results
+
+| Quantity | Measured | Model | Difference |
+|---|---:|---:|---|
+| Outflow stop time | 120.9 s | 121.1 s | About 0.2 s later |
+| Final cup temperature | 75.0 °C | 74.6 °C | About 0.4 °C lower |
+| Coffee concentration (TDS) | 11.56 g/L | 11.60 g/L | About 0.04 g/L higher |
+
+Stop time is defined by the server liquid level approaching a plateau. Cup temperatures are compared at the same reading time (132 s). TDS is the mass of dissolved solids per litre of coffee; the model comparison uses the measured final beverage volume.
+
+**These results follow calibration to this brew.** Each case has one TDS observation and one adjustable extraction parameter. A small concentration difference therefore does not establish predictive accuracy for a new recipe.
+
+### Agreement throughout the brew
+
+Similar final values can conceal errors along the way. Outflow and temperature are also checked over time:
+
+| Check | Reference result | Interpretation |
+|---|---|---|
+| Outflow curve mismatch | RMSE 2.65 mL | Overall mismatch at fitted observation times, not the largest error |
+| Server temperature mismatch | RMSE 0.93 °C | Only 6 readings that pass observation screening, with at least 150 mL in the server |
+| Known timing discrepancy | Second-pour outflow arrives about 2–4 s early | A small overall mismatch still leaves a local timing error unresolved |
+
+RMSE is the root mean square error, a summary of mismatch across observation times. It is not a bound on the error at every instant.
+
+### Coverage of the checks
+
+Three brews have video-based measurements. The reference Kinu 29 brew and the Kinu 28 brew pass the specified checks; the Kinu 27 brew retains a systematic pattern in its residuals. A fourth, hand-logged brew fails the checks and has suspected bias in its outflow readings.
+
+Each case is calibrated separately, and the full suite does not yet pass. The number of passing cases is not a predictive accuracy rate for new brews. See the [benchmark results, metric definitions, and diagnostic figures](docs/reproducibility.md#calibration-report-and-diagnostics) for details.
 
 ## Quick start
 
-Requires Python with [uv](https://docs.astral.sh/uv/).
+Requires Python ≥ 3.13 and [uv](https://docs.astral.sh/uv/). Install dependencies from the project root:
 
 ```bash
 uv sync
-uv run python -m unittest discover -s tests
 ```
 
-Simulate a brew with the built-in light-roast defaults:
+Simulate 180 seconds with the built-in light-roast defaults:
 
 ```python
 from pour_over import V60Params, RoastProfile, PourProtocol, simulate_brew
@@ -48,301 +76,29 @@ results = simulate_brew(params, PourProtocol.standard_v60(), t_end=180)
 print(f"TDS = {results['TDS_gl'][-1]:.1f} g/L, EY = {results['EY_pct'][-1]:.1f}%")
 ```
 
-`results` holds time series for every state: outflow volume (`v_out_ml`),
-slurry temperature (`T_C`), concentration (`TDS_gl`), extraction yield
-(`EY_pct`), fast/slow contributions, and per-bin solute masses.
+This example demonstrates the API. For replaying the calibrated reference brew, fitting your own measurements, and running the benchmark, see [Reproducibility and calibration](docs/reproducibility.md).
 
-Generate the showcase figures (`v60_*.png`) from the calibrated state, then
-refit the reference brew:
+## Scope and limitations
 
-```bash
-uv run python -m pour_over
-```
+- **Generalization:** New pour schedules and water temperatures have not been validated against new measured brews. Transferring extraction parameters between cases produces TDS errors of up to about 2.7 g/L.
+- **Particle-size measurements:** The absolute PSD scale retains approximately ±45% systematic uncertainty. Repeat scans at one setting can differ more than neighbouring settings; the current data cannot resolve small grind changes. Permeability is calibrated per case.
+- **Timing and thermal structure:** Second-pour outflow arrives about 2–4 s early. Early heat coupling below about 150 mL in the server is insufficiently represented, and those temperature readings are excluded from fitting.
+- **Parameter interpretation:** `τ_wet` should not be treated as a directly measured wetting time. Reported confidence intervals hold the other parameters fixed and underestimate joint uncertainty.
 
-Run the full calibration check on all four reference brews (fit, benchmark
-gates, identifiability):
+See [Model applicability](docs/model.md#model-applicability) for the full assumptions and diagnostics.
 
-```bash
-uv run python -m pour_over benchmark --all-cases
-```
+## Documentation and data
 
-### Fitting your own brew
-
-Put one directory per brew under `data/` containing:
-
-- `*_flow_profile.csv` (or `*_flow_profile_video.csv`): one row per reading,
-  with recipe metadata repeated on every row (`dose_g`, `bed_height_cm`,
-  `brew_temp_C`, `ambient_temp_C`, `dripper_mass_g`, `final_tds_pct`, …) and
-  the time series `time_s`, `poured_weight_g`, `drained_volume_ml`,
-  `use_for_fit`. The files under `data/kinu_29_light/4:12/` are complete
-  examples of both formats.
-- `*_psd_bins.csv`: the particle-size distribution, generated from a
-  [coffeegrindsize](https://github.com/latteine1217/coffeegrindsize) export
-  with `uv run python -m pour_over.psd` (see `--help`).
-
-Then fit it:
-
-```python
-from pour_over.fitting import generate_measured_flow_fit_artifacts
-
-params, info = generate_measured_flow_fit_artifacts(
-    csv_path="data/my_brew/my_brew_flow_profile.csv",
-    plot_path="data/my_brew/my_brew_flow_fit.png",
-    summary_path="data/my_brew/my_brew_flow_fit_summary.csv",
-)
-```
-
-This writes the fitted parameters with confidence intervals, fit diagnostics
-and three comparison figures. A fit takes about 40 s per brew.
-
-## How the model works
-
-### Water
-
-Water is held in four explicit pools: free water ponded above the bed,
-drainable pore water, capillary-held pore water, and water absorbed into the
-grains. Every rate moves water from one pool to another, so poured water is
-conserved exactly (the reported residual is about 1e-13 mL).
-
-| Mechanism | Physics | Parameters |
-|---|---|---|
-| Absorption into grains | Grains take up water at a rate set by Lucas-Washburn scaling `γ(T)/μ(T)` | roast-dependent capacity |
-| Bed wetting | A wetting state `w` grows from 0 to 1 with time constant `τ_wet` and opens both absorption and capillary retention | `τ_wet` (fitted) |
-| Capillary retention | Young-Laplace head `2σ(T)/(ρ g r_pore)`, with pore radius `0.2·d32` from the measured PSD, sets how much water the bed can hold against gravity | from PSD |
-| Flow through the bed | Darcy's law driven by the ponded head plus the saturated bed height, minus a capillary cutoff and a decaying CO₂ back-pressure | permeability `k` (fitted) |
-| Partly saturated flow | Corey-type relative permeability `kr = smoothstep(S)^n`, with `smoothstep(S) = 3S² − 2S³`, on the drainable saturation; at low saturation it falls about as `S^(2n)` | exponent `n` (fitted) |
-| Fines clogging | Fines block pore throats (number-weighted) and deposit in the bed (volume-weighted); each pour briefly relieves the throats; swelling and head compaction lower porosity through Kozeny-Carman | clogging strength from PSD |
-| Bypass | Flow along the filter ribs once the ponded head exceeds a few mm | fixed |
-| Outlet | A 0.5 s hold-up for dripping from the outlet into the server | fixed |
-
-### Extraction
-
-- **Per size bin.** The measured PSD is kept as individual size bins, each
-  with its own surface area and particle size.
-- **Fast and slow pools.** In each bin, the outer 30 μm shell (about one
-  coffee cell) holds the fast pool: cells broken by grinding, open to the pore
-  liquid, releasing by free-solution diffusion. The core holds the slow pool:
-  solute must cross intact cell walls, and that hindrance is the fitted
-  factor `τ_tort`. Both pools follow the long-time limit of diffusion out of
-  a sphere:
-  - shell: `λ_fast = π²·D/(2δ)²`;
-  - core: `λ_slow = π²·(D/τ_tort)/R_core²`.
-- **Saturation.** Release slows as the liquid approaches the solubility
-  ceiling `C_sat(T)`.
-- **Temperature.** Diffusivity follows Stokes-Einstein,
-  `D = k_B T / (6π μ(T) r)`. This is the only temperature effect on release
-  rates.
-- **Transport.** Solute is carried through two stacked layers of the bed into
-  the outflow.
-
-Total extractable mass is fixed by roast (30% of dose for light and medium
-roast). The model has no sorption equilibrium, so all of it is reachable given
-enough time. The only fitted extraction parameter is the kernel hindrance
-`τ_tort`, and
-with one TDS reading per brew it is degenerate with the shell thickness and
-the extractable fraction.
-
-### Heat
-
-- **Slurry.** Water and grounds in the cone, heated by incoming water at the
-  kettle temperature and cooled to the room.
-- **Dripper.** The ceramic cone, with heat capacity from its measured mass. It
-  exchanges heat with the slurry through the wetted cone area, with a fitted
-  heat-transfer coefficient `U`.
-- **Server.** It mixes incoming coffee and cools to ambient.
-
-Temperature feeds back into flow through water viscosity and into extraction
-through diffusivity and solubility.
-
-The ODE system is integrated with RK45 at `rtol 1e-7`, restarted at every
-change in pour rate.
-
-## Calibration
-
-### Measurements
-
-| Quantity | Source | Use |
-|---|---|---|
-| Dose, bed height, water and room temperature, dripper mass | direct measurement | fixed input |
-| Particle-size distribution | photo of the grounds analysed with [coffeegrindsize](https://github.com/latteine1217/coffeegrindsize) | fixed input |
-| Poured volume over time | scale under the server, read from the video | fixed input |
-| Drained volume over time | liquid level on the server's graduations, read from the video | fitted |
-| Server temperature over time | thermocouple display in the video | fitted |
-| Outlet temperature | second thermocouple | held-out check |
-| Final TDS | refractometer | fitted |
-
-Each video reading carries its own uncertainty (4–15 mL depending on how
-clearly the level is visible). Raw measurement files are never edited; any
-correction is applied in memory and listed in the fit summary. The video
-readout pipeline is documented in `tools/video/README.md`.
-
-### Fitting procedure
-
-The loss is a χ² over the measurements, each term divided by its measurement
-uncertainty, plus weak priors that keep parameters in physical ranges. The
-three physics blocks are fitted in order so that none of them absorbs
-another's error:
-
-1. **Hydraulics** (`k`, Corey `n`, `τ_wet`) against the outflow curve and stop
-   time.
-2. **Heat** (`U`) against the server temperature series. A brew with only a
-   single cup temperature fits the server cooling rate instead.
-3. **Extraction** (`τ_tort`) against the final TDS, compared as dissolved mass
-   over the *measured* final volume so that a flow error cannot be hidden in
-   the extraction parameter.
-
-Each stage is a bounded least-squares fit from three starting points. Every
-fitted parameter is reported with a 95% confidence interval.
-
-Everything else is either measured, computed from measurements (pore size,
-clogging strength and heat capacities), or one of these fixed assumptions:
-
-| Assumption | Value | Role |
-|---|---|---|
-| Solubility ceilings `C_sat` fast / slow | 220 / 60–100 g/L by roast | limit on dissolved concentration |
-| Solute molecular radii | 0.40 / 1.00 nm | Stokes-Einstein diffusivity |
-| Broken-shell thickness | 30 μm (about one coffee cell) | fast diffusion length and fast/slow split |
-| Pore radius | 0.2 × `d32` | capillary retention |
-| CO₂ back-pressure | 9 / 1 / 4 mm head (light / medium / dark), decaying over 35 s | early bloom flow |
-| Bypass onset / width | 3 mm / 8 mm of ponded head | flow along filter ribs |
-| Extractable fraction `max_EY` | 0.30 / 0.30 / 0.32 (light / medium / dark) | total soluble mass |
-| Bed layers for solute transport | 2 | axial resolution |
-| Server cooling rate | 3.7e-4 s⁻¹ | estimated from wall convection and radiation |
-
-## Results
-
-Reference brew `kinu29/4:12`
-(`data/kinu_29_light/4:12/kinu29_light_20g_flow_fit_summary.csv`):
-
-| Fitted parameter | Value | 95% CI |
-|---|---|---|
-| permeability `k` | 6.75e-11 m² | [6.65e-11, 7.04e-11] |
-| Corey `n` | 3.25 | [2.25, 4.38] |
-| wetting time `τ_wet` | 10.0 s (at lower bound) | up to 16.1 |
-| dripper heat transfer `U` | 250 W/(m²K) | [183, 362] |
-| kernel hindrance `τ_tort` | 4.95 | — |
-
-| Fit quality | Value |
+| Resource | Contents |
 |---|---|
-| outflow volume RMSE | 2.6 mL |
-| stop-time error | +0.2 s |
-| server temperature RMSE | 0.9 °C |
-| cup temperature error | −0.4 °C |
-| TDS error | +0.04 g/L (measured 11.56 g/L) |
-| reduced χ² | 0.37 |
+| [Model and assumptions](docs/model.md) | Equations, PSD contract, parameter roles, and limitations |
+| [Reproducibility and calibration](docs/reproducibility.md) | Simulation, data preparation, fitting, benchmarks, and code organization |
+| [Measurement workflow](tools/video/README.md) | Frame-by-frame video readings and observation construction |
+| [Literature map](docs/literature_map.md) | Sources and evidence strength for each closure |
+| [Reference case data](data/kinu_29_light/4:12/) | Measured curves, PSD, calibration summaries, and diagnostic figures |
 
-All four reference brews (`data/benchmark_suite_summary.csv`):
-
-| Brew | Data source | reduced χ² | TDS error | Benchmark |
-|---|---|---|---|---|
-| Kinu 29, 4/12 (reference) | video | 0.37 | +0.04 g/L | pass |
-| Kinu 27, 4/12 | video | 0.39 | +0.12 g/L | fails; residuals show a systematic pattern |
-| Kinu 28, 4/20 | video | 0.51 | −0.03 g/L | pass |
-| Kinu 29, 4/11 | hand log | 8.74 | +0.10 g/L | fails; hand-logged volumes read high |
-
-A brew passes when its residuals are within measurement noise and show no
-systematic pattern, and its water balance, cup temperature and TDS are within
-set tolerances. Fitted permeabilities agree across the three video brews
-(6.8–8.1e-11 m²); a single `k` and Corey `n` shared by all three fits within
-measurement noise, so these data cannot resolve a permeability change between
-grind settings 27 and 29.
-
-All of these numbers are **calibration** errors on the brew each parameter
-set was fitted to, not prediction errors on a new brew.
-
-## What to trust
-
-**Well constrained.** These quantities are fitted to direct time-series
-measurements, and their parameters agree across brews:
-
-- the outflow curve, drain time and water retained in the bed;
-- server and cup temperatures.
-
-Predictions for a recipe that differs from the calibrated brews (another pour
-schedule or water temperature) have not yet been checked against a new
-measured brew.
-
-**Use with care:**
-
-- **Absolute TDS for a new grind or a different roast date.** Each brew has
-  one TDS reading and one fitted extraction parameter, so the TDS match above
-  is not evidence that extraction is predicted correctly. The fitted
-  kernel hindrance `τ_tort` spans 3.3–7.4 across brews and does not follow
-  grind size. Reusing it between two brews of the same beans and grind one
-  day apart gives TDS errors of −1.6 and +1.8 g/L, and across grind settings
-  and roast dates up to 2.7 g/L. Most extractable mass sits in the slow pool,
-  whose rate scales with particle size, so TDS inherits the 20% day-to-day
-  scatter of the measured PSD: refitting the reference brew with the other
-  day's PSD changes `τ_tort` by a factor of 1.5, comparable to the spread
-  across brews. Bean aging and TDS measurement error are not yet ruled out.
-- **Grind sweeps.** Changing grind size rescales permeability, but the fines
-  clogging is computed from the measured PSD and does not change with a
-  simulated grind change. A new grind needs a new PSD measurement for a
-  reliable prediction.
-- **The second pour after the bloom.** When a pour restarts an outflow that
-  had stopped, the model's outflow arrives 2–4 s early. The total volume is
-  right.
-- **`τ_wet`** is better read as a shape parameter than as a measured wetting
-  time. It is set mostly by the later pours, not the bloom, and differs by a
-  factor of four across brews.
-- **Server temperature below about 150 mL** in the server is less accurate,
-  because the dry glass wall is not modelled. These readings are excluded from
-  the fit.
-- **Confidence intervals** are computed with other parameters held fixed, so
-  they understate the true uncertainty: by a factor of 1.5–2.4 for `k`,
-  Corey `n` and `τ_wet`, which are correlated, and by less than 1.3 for the
-  thermal parameters and `τ_tort`.
-
-**Not measured, assumed:** outlet diameter, filter paper resistance, paper
-water hold-up, server heat capacity (back-solved), and the absolute PSD scale
-(±45% systematic uncertainty).
-
-## Repository layout
-
-```
-pour_over/
-├── core.py            # coupled ODE engine (simulate_brew)
-├── params.py          # closures, V60Params, RoastProfile, PourProtocol
-├── constant.py        # physical constants and measured fixed inputs
-├── psd.py             # PSD ingestion (raw export → model bins)
-├── measured_io.py     # measured CSV loading, measurement constants
-├── preprocess.py      # in-memory measurement corrections
-├── observation.py     # outlet hold-up, server node, stop-time rule
-├── fitting.py         # χ² objective and staged fit
-├── benchmark.py       # four-brew benchmark and gates
-├── identifiability.py # parameter identifiability scans and CI
-├── analysis.py        # sensitivity and grind optimisation
-├── showcase_state.py  # loads the current calibrated state
-└── viz.py             # figures
-tools/video/           # brew-video readout pipeline
-data/<grinder>_<roast>/<date>/   # per-brew measurements, PSD, fit outputs
-docs/                  # literature map, experiment log
-```
-
-Raw videos and photos are not version-controlled; per-frame readouts are kept
-under `data/<case>/video/`.
-
-## References
-
-The closure-by-closure literature map is in `docs/literature_map.md`. Core
-sources:
-
-- Corrochano et al. (2015), *Journal of Food Engineering* — coffee packed-bed
-  permeability and Kozeny-Carman limits. DOI `10.1016/j.jfoodeng.2014.11.006`
-- Moroney et al. (2015), *Chemical Engineering Science* — double-porosity coffee
-  extraction with fast surface release and slow intragranular diffusion.
-  DOI `10.1016/j.ces.2015.06.003`
-- Moroney et al. (2019), *PLOS ONE* — extraction uniformity in porous coffee beds.
-  DOI `10.1371/journal.pone.0219906`
-- Cameron et al. (2020), *Matter* — PSD, inhomogeneous flow and extraction
-  reproducibility. DOI `10.1016/j.matt.2019.12.019`
-- Crank (1975), *The Mathematics of Diffusion* — spherical-grain diffusion
-- Brooks & Corey (1964) — relative permeability of unsaturated porous media
-- Washburn (1921), *Physical Review* — capillary imbibition scaling
-
-Model development, rejected mechanisms and every refit are recorded in
-`docs/experiment_log.md`.
+Model development, rejected mechanisms, and experiments are recorded in the [experiment log](docs/experiment_log.md); its `[BASELINE]` section defines the current reference. Raw videos and photographs are not version-controlled. Traceable readings are retained under `data/<case>/video/`.
 
 ## License
 
-MIT — see `LICENSE`.
+[MIT License](LICENSE)

@@ -51,6 +51,11 @@ data/**/*.pdf
 
 # Local tooling logs
 .playwright-mcp/
+.pytest_cache/
+.ruff_cache/
+
+# Local agent plans and working notes; research evidence belongs in docs/experiment_log.md.
+/docs/superpowers/
 
 # 文獻回顧的原始 OpenAlex 檢索結果（可由 frontier.md / survey.md 記錄的查詢重新產生）
 docs/literature_review/**/search_results/
